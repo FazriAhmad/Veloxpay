@@ -58,8 +58,8 @@ server/
 
 ## Status saat ini
 
-Fase 0–2 selesai. Frontend dan backend tersambung penuh dengan login sungguhan dan RBAC di server (Fase 1). PPh 21, BPJS Kesehatan/JHT/JP, estimasi THR, dan peringatan upah minimum kini dihitung otomatis di `server/payrollEngine.js` setiap slip diterbitkan — lihat `server/test/` untuk unit test-nya (Fase 2).
+Fase 0–3 selesai. Frontend dan backend tersambung penuh dengan login sungguhan dan RBAC di server (Fase 1). PPh 21, BPJS Kesehatan/JHT/JP, estimasi THR, dan peringatan upah minimum dihitung otomatis di `server/payrollEngine.js` setiap slip diterbitkan (Fase 2). Slip gaji PDF dibuat sungguhan di server (`server/pdf.js`), dan menandai slip "Sudah Dibayar" memicu email asli via SMTP — atau tercatat jujur "dilewati" bila SMTP belum dikonfigurasi (Fase 3). Lihat `server/test/` untuk unit test-nya.
 
-**Penting:** perhitungan PPh 21 memakai pendekatan progresif disetahunkan, bukan tabel TER resmi DJP (PMK 168/2023) — cukup akurat untuk estimasi, tapi perlu divalidasi/diganti sebelum dipakai pelaporan pajak sungguhan. Upah minimum juga masih satu angka nasional, bukan data UMR/UMK per daerah.
+**Penting:** perhitungan PPh 21 memakai pendekatan progresif disetahunkan, bukan tabel TER resmi DJP (PMK 168/2023) — cukup akurat untuk estimasi, tapi perlu divalidasi/diganti sebelum dipakai pelaporan pajak sungguhan. Upah minimum juga masih satu angka nasional, bukan data UMR/UMK per daerah. Email hanya benar-benar terkirim setelah `SMTP_HOST` dkk diisi di `server/.env`.
 
-Belum ada: generate PDF server-side dan pengiriman email nyata (Fase 3), enkripsi data sensitif (Fase 4), test otomatis untuk frontend (Fase 5). Penjadwalan dan kotak masuk email di modul V3 masih simulasi lokal. Lihat PRD di atas untuk detail tiap fase.
+Belum ada: enkripsi data sensitif (Fase 4), test otomatis untuk frontend (Fase 5). Penjadwalan otomatis (cron) di modul V3 masih konfigurasi lokal, belum benar-benar dieksekusi terjadwal. Lihat PRD di atas untuk detail tiap fase.
