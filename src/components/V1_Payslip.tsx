@@ -33,7 +33,11 @@ export const V1_Payslip: React.FC<V1PayslipProps> = ({
   onDeleteSlip,
   addToast,
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'employees' | 'input' | 'history'>('employees');
+  // "employees" and "input" are admin-only views, so an employee must start on the
+  // one sub-tab they can actually see — otherwise they land on a blank page.
+  const [activeSubTab, setActiveSubTab] = useState<'employees' | 'input' | 'history'>(
+    activeRole === 'employee' ? 'history' : 'employees'
+  );
   
   // Modals state
   const [isEmpModalOpen, setIsEmpModalOpen] = useState(false);

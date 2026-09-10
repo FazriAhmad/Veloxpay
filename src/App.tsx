@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Employee,
@@ -8,15 +8,12 @@ import {
   AuditLog,
   ScheduledConfig,
   SimulatedEmail,
-  INITIAL_EMPLOYEES,
-  INITIAL_ATTENDANCE,
-  INITIAL_COMPONENTS,
-  INITIAL_SLIPS,
-  INITIAL_AUDIT_LOGS,
   INITIAL_SCHEDULED_CONFIG,
-  INITIAL_EMAILS
+  INITIAL_EMAILS,
 } from './lib/mockData';
+import { api, setToken, getToken, AuthUser } from './lib/api';
 import { LandingPage } from './components/LandingPage';
+import { LoginPage } from './components/LoginPage';
 import { V1_Payslip } from './components/V1_Payslip';
 import { V2_Management } from './components/V2_Management';
 import { V3_Automation } from './components/V3_Automation';
@@ -25,79 +22,28 @@ import { PayslipDocument } from './components/PayslipDocument';
 
 function App() {
   // --- APPLICATION STATE ---
-  const [currentView, setCurrentView] = useState<'landing' | 'dashboard'>('landing');
+  const [currentView, setCurrentView] = useState<'landing' | 'login' | 'dashboard'>('landing');
   const [activeTab, setActiveTab] = useState<'v1' | 'v2' | 'v3'>('v1');
-  const [activeRole, setActiveRole] = useState<'admin' | 'employee'>('admin');
-  const [currentEmployeeId, setCurrentEmployeeId] = useState<string>('EMP-001');
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [isBooting, setIsBooting] = useState(!!getToken());
 
-  // --- CORE DATA STATE ---
-  const [employees, setEmployees] = useState<Employee[]>(() => {
-    const saved = localStorage.getItem('velox_employees');
-    return saved ? JSON.parse(saved) : INITIAL_EMPLOYEES;
-  });
+  // --- CORE DATA STATE (server-backed) ---
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [attendance, setAttendance] = useState<Attendance[]>([]);
+  const [components, setComponents] = useState<SalaryComponent[]>([]);
+  const [slips, setSlips] = useState<PayrollSlip[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
 
-  const [attendance, setAttendance] = useState<Attendance[]>(() => {
-    const saved = localStorage.getItem('velox_attendance');
-    return saved ? JSON.parse(saved) : INITIAL_ATTENDANCE;
-  });
-
-  const [components, setComponents] = useState<SalaryComponent[]>(() => {
-    const saved = localStorage.getItem('velox_components');
-    return saved ? JSON.parse(saved) : INITIAL_COMPONENTS;
-  });
-
-  const [slips, setSlips] = useState<PayrollSlip[]>(() => {
-    const saved = localStorage.getItem('velox_slips');
-    return saved ? JSON.parse(saved) : INITIAL_SLIPS;
-  });
-
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => {
-    const saved = localStorage.getItem('velox_audit_logs');
-    return saved ? JSON.parse(saved) : INITIAL_AUDIT_LOGS;
-  });
-
+  // Scheduler config and the email inbox are still local mocks — real scheduling and
+  // email delivery arrive in Phase 3, so they stay in localStorage until then.
   const [scheduledConfig, setScheduledConfig] = useState<ScheduledConfig>(() => {
     const saved = localStorage.getItem('velox_scheduled_config');
     return saved ? JSON.parse(saved) : INITIAL_SCHEDULED_CONFIG;
   });
-
   const [simulatedEmails, setSimulatedEmails] = useState<SimulatedEmail[]>(() => {
     const saved = localStorage.getItem('velox_emails');
     return saved ? JSON.parse(saved) : INITIAL_EMAILS;
   });
-
-  // --- TOAST NOTIFICATIONS ---
-  const [toasts, setToasts] = useState<ToastMessage[]>([]);
-
-  const addToast = (title: string, message: string, type: 'success' | 'error' | 'info' | 'warning' = 'info') => {
-    const id = Math.random().toString(36).substring(2, 9);
-    setToasts((prev) => [...prev, { id, title, message, type }]);
-  };
-
-  const removeToast = (id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-  };
-
-  // --- PERSISTENCE TO LOCAL STORAGE ---
-  useEffect(() => {
-    localStorage.setItem('velox_employees', JSON.stringify(employees));
-  }, [employees]);
-
-  useEffect(() => {
-    localStorage.setItem('velox_attendance', JSON.stringify(attendance));
-  }, [attendance]);
-
-  useEffect(() => {
-    localStorage.setItem('velox_components', JSON.stringify(components));
-  }, [components]);
-
-  useEffect(() => {
-    localStorage.setItem('velox_slips', JSON.stringify(slips));
-  }, [slips]);
-
-  useEffect(() => {
-    localStorage.setItem('velox_audit_logs', JSON.stringify(auditLogs));
-  }, [auditLogs]);
 
   useEffect(() => {
     localStorage.setItem('velox_scheduled_config', JSON.stringify(scheduledConfig));
@@ -107,201 +53,176 @@ function App() {
     localStorage.setItem('velox_emails', JSON.stringify(simulatedEmails));
   }, [simulatedEmails]);
 
-  // --- AUDIT LOG HELPER ---
-  const createAuditLog = (action: string, details: string) => {
-    const newLog: AuditLog = {
-      id: `LOG-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
-      timestamp: new Date().toISOString(),
-      user: activeRole === 'admin' ? 'Dewi Lestari' : 'Ahmad Subarjo',
-      role: activeRole === 'admin' ? 'Finance Lead' : 'Senior Software Engineer',
-      action,
-      details,
-      ipAddress: '192.168.1.' + Math.floor(Math.random() * 254 + 1),
-    };
-    setAuditLogs((prev) => [newLog, ...prev]);
+  // --- TOAST NOTIFICATIONS ---
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  const addToast = useCallback(
+    (title: string, message: string, type: 'success' | 'error' | 'info' | 'warning' = 'info') => {
+      const id = Math.random().toString(36).substring(2, 9);
+      setToasts((prev) => [...prev, { id, title, message, type }]);
+    },
+    []
+  );
+
+  const removeToast = (id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // --- HANDLERS ---
+  // --- DATA LOADING ---
+  // Refetches everything the signed-in user is allowed to see. Called after every
+  // mutation so the UI always reflects what the server actually stored.
+  const loadData = useCallback(async (role: AuthUser['role']) => {
+    const [emps, atts, comps, slps, logs] = await Promise.all([
+      api.listEmployees(),
+      api.listAttendance(),
+      api.listComponents(),
+      api.listSlips(),
+      role === 'admin' ? api.listAuditLogs() : Promise.resolve([] as AuditLog[]),
+    ]);
+    setEmployees(emps);
+    setAttendance(atts);
+    setComponents(comps);
+    setSlips(slps);
+    setAuditLogs(logs);
+  }, []);
 
-  // V1: Add Employee
-  const handleAddEmployee = (emp: Omit<Employee, 'id' | 'joinDate'>) => {
-    const newId = `EMP-0${employees.length + 1}`;
-    const newEmp: Employee = {
-      ...emp,
-      id: newId,
-      joinDate: '2026-09-07', // today's date in context
-    };
-    setEmployees((prev) => [...prev, newEmp]);
-    
-    // Auto-create blank attendance for Sept 2026
-    const newAtt: Attendance = {
-      employeeId: newId,
-      month: '2026-09',
-      present: 22,
-      sick: 0,
-      leave: 0,
-      alpha: 0,
-      overtimeHours: 0,
-    };
-    setAttendance((prev) => [...prev, newAtt]);
+  // Restore an existing session on refresh instead of dumping the user back to the landing page.
+  useEffect(() => {
+    if (!getToken()) return;
 
-    createAuditLog('ADD_EMPLOYEE', `Mendaftarkan karyawan baru ${emp.name} dengan ID ${newId}`);
-  };
-
-  // V1: Edit Employee
-  const handleEditEmployee = (emp: Employee) => {
-    setEmployees((prev) => prev.map((e) => (e.id === emp.id ? emp : e)));
-    createAuditLog('EDIT_EMPLOYEE', `Memperbarui data profil karyawan ${emp.name} (${emp.id})`);
-  };
-
-  // V1: Delete Employee
-  const handleDeleteEmployee = (id: string) => {
-    const emp = employees.find((e) => e.id === id);
-    setEmployees((prev) => prev.filter((e) => e.id !== id));
-    createAuditLog('DELETE_EMPLOYEE', `Menghapus karyawan ${emp?.name || id} dari sistem.`);
-  };
-
-  // V1: Generate Slip
-  const handleGenerateSlip = (slip: Omit<PayrollSlip, 'id' | 'generatedAt'>) => {
-    const newId = `PAY-202609-0${slips.length + 1}`;
-    const newSlip: PayrollSlip = {
-      ...slip,
-      id: newId,
-      generatedAt: new Date().toISOString(),
-    };
-    setSlips((prev) => [newSlip, ...prev]);
-    createAuditLog('GENERATE_PAYROLL', `Membuat draf slip gaji untuk ${slip.employeeName} periode ${slip.month}`);
-  };
-
-  // V1: Delete Slip
-  const handleDeleteSlip = (id: string) => {
-    setSlips((prev) => prev.filter((s) => s.id !== id));
-    createAuditLog('DELETE_PAYROLL', `Menghapus slip gaji ${id} dari riwayat.`);
-  };
-
-  // V2: Update Attendance
-  const handleUpdateAttendance = (att: Attendance) => {
-    setAttendance((prev) => {
-      const idx = prev.findIndex((a) => a.employeeId === att.employeeId && a.month === att.month);
-      if (idx > -1) {
-        return prev.map((a, i) => (i === idx ? att : a));
-      } else {
-        return [...prev, att];
+    (async () => {
+      try {
+        const me = await api.me();
+        setUser(me);
+        await loadData(me.role);
+        setCurrentView('dashboard');
+      } catch {
+        setToken(null);
+      } finally {
+        setIsBooting(false);
       }
-    });
-    const emp = employees.find((e) => e.id === att.employeeId);
-    createAuditLog('UPDATE_ATTENDANCE', `Memperbarui data kehadiran bulanan ${emp?.name || att.employeeId} periode ${att.month}`);
-  };
+    })();
+  }, [loadData]);
 
-  // V2: Add Salary Component
-  const handleAddComponent = (comp: Omit<SalaryComponent, 'id' | 'isEditable'>) => {
-    const newId = `COMP-0${components.length + 1}`;
-    const newComp: SalaryComponent = {
-      ...comp,
-      id: newId,
-      isEditable: true,
-    };
-    setComponents((prev) => [...prev, newComp]);
-    createAuditLog('ADD_COMPONENT', `Menambahkan komponen gaji baru "${comp.name}" (${comp.type})`);
-  };
-
-  // V2: Update Salary Component
-  const handleUpdateComponent = (comp: SalaryComponent) => {
-    setComponents((prev) => prev.map((c) => (c.id === comp.id ? comp : c)));
-    createAuditLog('UPDATE_COMPONENT', `Memperbarui detail komponen gaji "${comp.name}"`);
-  };
-
-  // V2: Delete Salary Component
-  const handleDeleteComponent = (id: string) => {
-    const comp = components.find((c) => c.id === id);
-    setComponents((prev) => prev.filter((c) => c.id !== id));
-    createAuditLog('DELETE_COMPONENT', `Menghapus komponen gaji "${comp?.name || id}"`);
-  };
-
-  // V2: Update Slip Status (Approval Workflow)
-  const handleUpdateSlipStatus = (id: string, status: PayrollSlip['status'], approvedBy?: string) => {
-    setSlips((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, status, approvedBy: approvedBy || s.approvedBy } : s))
-    );
-    const slip = slips.find((s) => s.id === id);
-    createAuditLog(
-      status === 'Approved' ? 'APPROVE_PAYROLL' : 'REJECT_PAYROLL',
-      `Merubah status persetujuan slip ${id} (${slip?.employeeName}) menjadi ${status}`
-    );
-  };
-
-  // V3: Update Scheduled Config
-  const handleUpdateScheduledConfig = (config: ScheduledConfig) => {
-    setScheduledConfig(config);
-    createAuditLog('UPDATE_SCHEDULE', `Memperbarui penjadwalan otomatis payroll: ${config.isEnabled ? 'AKTIF' : 'NONAKTIF'}, Tanggal ${config.dayOfMonth}`);
-  };
-
-  // V3: Mass Disbursement
-  const handleDisbursePayroll = () => {
-    const dateStr = '2026-09-07'; // current date in context
-    const approved = slips.filter((s) => s.status === 'Approved');
-
-    if (approved.length === 0) return;
-
-    // Update statuses
-    setSlips((prev) =>
-      prev.map((s) => (s.status === 'Approved' ? { ...s, status: 'Paid', paymentDate: dateStr } : s))
-    );
-
-    // Create Simulated Emails for each employee
-    const newEmails: SimulatedEmail[] = approved.map((s) => {
-      const emp = employees.find((e) => e.id === s.employeeId);
-      const emailTo = emp?.email || `${s.employeeName.toLowerCase().replace(/\s+/g, '')}@veloxpay.co.id`;
-      
-      return {
-        id: `EM-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
-        to: emailTo,
-        subject: `Slip Gaji Digital VeloxPay - September 2026`,
-        body: `Halo ${s.employeeName},\n\nSlip gaji Anda untuk periode September 2026 telah terbit. Dana sebesar ${new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(s.netSalary)} telah sukses ditransfer ke rekening ${s.bankName} Anda.\n\nSilakan login ke portal VeloxPay Anda untuk mengunduh dokumen PDF lengkap.\n\nTerima kasih,\nVeloxPay Automated Billing`,
-        sentAt: new Date().toISOString(),
-        isRead: false,
-        pdfId: s.id,
-      };
-    });
-
-    setSimulatedEmails((prev) => [...newEmails, ...prev]);
-
-    // Audit logs
-    createAuditLog('DISBURSE_PAYMENT', `Mengeksekusi transfer massal sukses untuk ${approved.length} rekening karyawan via VeloxTransfer.`);
-    createAuditLog('SEND_EMAIL_PAYSLIP', `Mengirimkan ${approved.length} notifikasi slip gaji otomatis ke email karyawan.`);
-  };
-
-  // V3: Read Email
-  const handleReadEmail = (id: string) => {
-    setSimulatedEmails((prev) =>
-      prev.map((e) => (e.id === id ? { ...e, isRead: true } : e))
-    );
-  };
-
-  // Navigation and view handlers
-  const handleEnterApp = (role: 'admin' | 'employee') => {
-    setActiveRole(role);
-    setCurrentView('dashboard');
-    if (role === 'employee') {
-      setCurrentEmployeeId('EMP-001'); // Ahmad Subarjo default
+  // Wraps a mutation so a failed API call always surfaces instead of silently doing nothing.
+  const runAction = async (action: () => Promise<void>, errorTitle: string) => {
+    if (!user) return;
+    try {
+      await action();
+      await loadData(user.role);
+    } catch (err) {
+      addToast(errorTitle, err instanceof Error ? err.message : 'Terjadi kesalahan.', 'error');
     }
+  };
+
+  // --- AUTH HANDLERS ---
+  const handleLogin = async (email: string, password: string) => {
+    const { token, user: loggedIn } = await api.login(email, password);
+    setToken(token);
+    setUser(loggedIn);
+    await loadData(loggedIn.role);
+    setActiveTab('v1');
+    setCurrentView('dashboard');
     addToast(
-      'Koneksi Berhasil',
-      `Masuk sebagai portal ${role === 'admin' ? 'Administrator (Dewi Lestari)' : 'Karyawan (Ahmad Subarjo)'}`,
+      'Berhasil Masuk',
+      `Selamat datang, ${loggedIn.name} (${loggedIn.role === 'admin' ? 'Administrator' : 'Karyawan'})`,
       'success'
     );
   };
 
-  const handleRoleSwitch = (role: 'admin' | 'employee') => {
-    setActiveRole(role);
-    if (role === 'employee') {
-      setCurrentEmployeeId('EMP-001');
-    }
-    addToast(
-      'Beralih Peran',
-      `Sekarang Anda berada di Portal ${role === 'admin' ? 'Administrator' : 'Karyawan'}`,
-      'info'
-    );
+  const handleLogout = () => {
+    setToken(null);
+    setUser(null);
+    setEmployees([]);
+    setAttendance([]);
+    setComponents([]);
+    setSlips([]);
+    setAuditLogs([]);
+    setCurrentView('landing');
+    addToast('Keluar', 'Sesi Anda telah diakhiri.', 'info');
+  };
+
+  // --- DATA HANDLERS ---
+  const handleAddEmployee = (emp: Omit<Employee, 'id' | 'joinDate'>) =>
+    runAction(async () => {
+      await api.createEmployee(emp);
+    }, 'Gagal Menambah Karyawan');
+
+  const handleEditEmployee = (emp: Employee) =>
+    runAction(async () => {
+      await api.updateEmployee(emp);
+    }, 'Gagal Memperbarui Karyawan');
+
+  const handleDeleteEmployee = (id: string) =>
+    runAction(async () => {
+      await api.deleteEmployee(id);
+    }, 'Gagal Menghapus Karyawan');
+
+  const handleGenerateSlip = (slip: Omit<PayrollSlip, 'id' | 'generatedAt'>) =>
+    runAction(async () => {
+      await api.createSlip(slip);
+    }, 'Gagal Membuat Slip');
+
+  const handleDeleteSlip = (id: string) =>
+    runAction(async () => {
+      await api.deleteSlip(id);
+    }, 'Gagal Menghapus Slip');
+
+  const handleUpdateAttendance = (att: Attendance) =>
+    runAction(async () => {
+      await api.saveAttendance(att);
+    }, 'Gagal Memperbarui Kehadiran');
+
+  const handleAddComponent = (comp: Omit<SalaryComponent, 'id' | 'isEditable'>) =>
+    runAction(async () => {
+      await api.createComponent(comp);
+    }, 'Gagal Menambah Komponen');
+
+  const handleUpdateComponent = (comp: SalaryComponent) =>
+    runAction(async () => {
+      await api.updateComponent(comp);
+    }, 'Gagal Memperbarui Komponen');
+
+  const handleDeleteComponent = (id: string) =>
+    runAction(async () => {
+      await api.deleteComponent(id);
+    }, 'Gagal Menghapus Komponen');
+
+  const handleUpdateSlipStatus = (id: string, status: PayrollSlip['status']) =>
+    runAction(async () => {
+      await api.updateSlipStatus(id, status);
+    }, 'Gagal Memperbarui Status Slip');
+
+  const handleUpdateScheduledConfig = (config: ScheduledConfig) => {
+    setScheduledConfig(config);
+  };
+
+  // Marks every approved slip as paid. VeloxPay never moves money — this records the
+  // admin's confirmation that payment already happened through the company's bank.
+  const handleMarkAllPaid = () =>
+    runAction(async () => {
+      const approved = slips.filter((s) => s.status === 'Approved');
+      if (approved.length === 0) return;
+
+      await Promise.all(approved.map((s) => api.updateSlipStatus(s.id, 'Paid')));
+
+      const newEmails: SimulatedEmail[] = approved.map((s) => {
+        const emp = employees.find((e) => e.id === s.employeeId);
+        return {
+          id: `EM-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
+          to: emp?.email || `${s.employeeName.toLowerCase().replace(/\s+/g, '')}@veloxpay.co.id`,
+          subject: 'Slip Gaji Digital VeloxPay - September 2026',
+          body: `Halo ${s.employeeName},\n\nSlip gaji Anda untuk periode September 2026 telah terbit dan ditandai sudah dibayar oleh tim Finance.\n\nSilakan login ke portal VeloxPay Anda untuk mengunduh dokumen lengkapnya.\n\nTerima kasih,\nVeloxPay`,
+          sentAt: new Date().toISOString(),
+          isRead: false,
+          pdfId: s.id,
+        };
+      });
+      setSimulatedEmails((prev) => [...newEmails, ...prev]);
+    }, 'Gagal Menandai Slip Dibayar');
+
+  const handleReadEmail = (id: string) => {
+    setSimulatedEmails((prev) => prev.map((e) => (e.id === id ? { ...e, isRead: true } : e)));
   };
 
   // Quick action: view slip from email link
@@ -310,15 +231,36 @@ function App() {
     setViewingSlip(slip);
   };
 
+  if (isBooting) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="flex items-center gap-3 text-sm font-semibold text-slate-500">
+          <i className="fi fi-rr-spinner animate-spin text-primary-600" />
+          Memulihkan sesi...
+        </div>
+      </div>
+    );
+  }
+
+  const activeRole = user?.role ?? 'employee';
+  const initials = (user?.name || '??')
+    .split(' ')
+    .map((w) => w[0])
+    .slice(0, 2)
+    .join('')
+    .toUpperCase();
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans selection:bg-primary-100 selection:text-primary-900">
       <ToastContainer toasts={toasts} removeToast={removeToast} />
 
       {currentView === 'landing' ? (
-        <LandingPage onEnterApp={handleEnterApp} />
+        <LandingPage onGoToLogin={() => setCurrentView('login')} />
+      ) : currentView === 'login' ? (
+        <LoginPage onLogin={handleLogin} onBack={() => setCurrentView('landing')} />
       ) : (
         <div className="flex-1 flex flex-col lg:flex-row min-h-screen">
-          
+
           {/* SIDEBAR NAVIGATION (NO-PRINT) */}
           <aside className="w-full lg:w-64 bg-slate-900 text-slate-400 p-6 flex flex-col justify-between shrink-0 border-r border-slate-800 no-print">
             <div className="space-y-8">
@@ -334,10 +276,7 @@ function App() {
                   </div>
                 </div>
                 <button
-                  onClick={() => {
-                    setCurrentView('landing');
-                    addToast('Keluar', 'Anda kembali ke halaman depan.', 'info');
-                  }}
+                  onClick={handleLogout}
                   className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-500 hover:text-white transition-colors lg:hidden"
                 >
                   <i className="fi fi-rr-exit text-xs" />
@@ -409,23 +348,18 @@ function App() {
             <div className="space-y-4 pt-6 border-t border-slate-800">
               <div className="flex items-center gap-3 px-2">
                 <div className="w-8 h-8 rounded-lg bg-slate-800 flex items-center justify-center text-slate-400 font-bold text-xs">
-                  {activeRole === 'admin' ? 'DL' : 'AS'}
+                  {initials}
                 </div>
                 <div>
-                  <span className="font-bold text-xs text-white block leading-none">
-                    {activeRole === 'admin' ? 'Dewi Lestari' : 'Ahmad Subarjo'}
-                  </span>
+                  <span className="font-bold text-xs text-white block leading-none">{user?.name}</span>
                   <span className="text-[10px] text-slate-500 block mt-1">
-                    {activeRole === 'admin' ? 'Admin / HR Manager' : 'Senior Engineer'}
+                    {activeRole === 'admin' ? 'Admin / HR Manager' : 'Karyawan'}
                   </span>
                 </div>
               </div>
 
               <button
-                onClick={() => {
-                  setCurrentView('landing');
-                  addToast('Keluar', 'Kembali ke halaman depan.', 'info');
-                }}
+                onClick={handleLogout}
                 className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-slate-800 hover:bg-rose-950 hover:text-rose-400 text-xs font-semibold text-slate-400 transition-colors cursor-pointer"
               >
                 <i className="fi fi-rr-exit" /> Keluar Console
@@ -435,7 +369,7 @@ function App() {
 
           {/* MAIN CONTENT AREA */}
           <div className="flex-1 flex flex-col min-w-0">
-            
+
             {/* HEADER (NO-PRINT) */}
             <header className="bg-white border-b border-slate-100 px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-4 no-print">
               {/* Left header: breadcrumbs */}
@@ -447,50 +381,41 @@ function App() {
                 </span>
               </div>
 
-              {/* Right header: controls */}
+              {/* Right header: session info */}
               <div className="flex items-center gap-4 w-full sm:w-auto justify-end">
-                {/* Simulated Date */}
                 <div className="hidden md:flex items-center gap-2 text-xs font-semibold text-slate-500 bg-slate-50 border border-slate-100 rounded-xl px-4 py-2.5">
                   <i className="fi fi-rr-calendar text-primary-600" />
-                  <span>Senin, 7 September 2026</span>
+                  <span>
+                    {new Date().toLocaleDateString('id-ID', {
+                      weekday: 'long',
+                      day: 'numeric',
+                      month: 'long',
+                      year: 'numeric',
+                    })}
+                  </span>
                 </div>
 
-                {/* Role Switcher */}
-                <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200/60 shrink-0">
-                  <button
-                    onClick={() => handleRoleSwitch('admin')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                      activeRole === 'admin'
-                        ? 'bg-white text-slate-900 shadow-sm'
-                        : 'text-slate-500 hover:text-slate-800'
-                    }`}
-                  >
-                    <i className="fi fi-rr-user-crown mr-1.5" /> Admin
-                  </button>
-                  <button
-                    onClick={() => handleRoleSwitch('employee')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                      activeRole === 'employee'
-                        ? 'bg-white text-slate-900 shadow-sm'
-                        : 'text-slate-500 hover:text-slate-800'
-                    }`}
-                  >
-                    <i className="fi fi-rr-user mr-1.5" /> Karyawan
-                  </button>
+                {/* Role is issued by the server at login — it is no longer switchable from the UI. */}
+                <div className="flex items-center gap-2 bg-slate-100 px-3 py-2 rounded-xl border border-slate-200/60 shrink-0">
+                  <i className={`fi ${activeRole === 'admin' ? 'fi-rr-user-crown text-primary-600' : 'fi-rr-user text-slate-500'} text-xs`} />
+                  <span className="text-xs font-semibold text-slate-800">
+                    {activeRole === 'admin' ? 'Admin' : 'Karyawan'}
+                  </span>
+                  <span className="text-xs text-slate-400 hidden sm:inline">· {user?.email}</span>
                 </div>
               </div>
             </header>
 
             {/* MAIN CONTAINER */}
             <main className="flex-1 p-6 max-w-7xl w-full mx-auto">
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={activeTab + '-' + activeRole}
-                  initial={{ opacity: 0, y: 15 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -15 }}
-                  transition={{ duration: 0.25 }}
-                >
+              {/* No AnimatePresence here: with React 19 StrictMode its "wait" mode can leave the
+                  exiting tab mounted forever, freezing the console on the previous module. */}
+              <motion.div
+                key={activeTab + '-' + activeRole}
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.25 }}
+              >
                   {activeTab === 'v1' && (
                     <V1_Payslip
                       employees={employees}
@@ -498,7 +423,7 @@ function App() {
                       slips={slips}
                       components={components}
                       activeRole={activeRole}
-                      currentEmployeeId={currentEmployeeId}
+                      currentEmployeeId={user?.employeeId}
                       onAddEmployee={handleAddEmployee}
                       onEditEmployee={handleEditEmployee}
                       onDeleteEmployee={handleDeleteEmployee}
@@ -515,7 +440,7 @@ function App() {
                       slips={slips}
                       components={components}
                       activeRole={activeRole}
-                      currentEmployeeId={currentEmployeeId}
+                      currentEmployeeId={user?.employeeId}
                       onUpdateAttendance={handleUpdateAttendance}
                       onAddComponent={handleAddComponent}
                       onUpdateComponent={handleUpdateComponent}
@@ -533,16 +458,15 @@ function App() {
                       scheduledConfig={scheduledConfig}
                       simulatedEmails={simulatedEmails}
                       activeRole={activeRole}
-                      currentEmployeeId={currentEmployeeId}
+                      currentEmployeeId={user?.employeeId}
                       onUpdateScheduledConfig={handleUpdateScheduledConfig}
-                      onDisbursePayroll={handleDisbursePayroll}
+                      onDisbursePayroll={handleMarkAllPaid}
                       onReadEmail={handleReadEmail}
                       addToast={addToast}
                       onViewSlipFromEmail={handleViewSlipFromEmail}
                     />
                   )}
-                </motion.div>
-              </AnimatePresence>
+              </motion.div>
             </main>
           </div>
         </div>

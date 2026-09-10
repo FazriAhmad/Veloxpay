@@ -31,7 +31,11 @@ export const V3_Automation: React.FC<V3AutomationProps> = ({
   addToast,
   onViewSlipFromEmail,
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'scheduler' | 'payment-status' | 'emails' | 'audit' | 'roles'>('scheduler');
+  // Every sub-tab except "emails" is admin-only, so employees start there rather than
+  // on a blank scheduler screen.
+  const [activeSubTab, setActiveSubTab] = useState<'scheduler' | 'payment-status' | 'emails' | 'audit' | 'roles'>(
+    activeRole === 'employee' ? 'emails' : 'scheduler'
+  );
 
   // Scheduler Form State
   const [schedDay, setSchedDay] = useState(scheduledConfig.dayOfMonth);
