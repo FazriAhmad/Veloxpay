@@ -33,6 +33,7 @@ cp .env.example .env   # isi DATABASE_URL & JWT_SECRET sesuai environment Anda
 npm run migrate         # buat semua tabel
 npm run seed            # isi data contoh + akun login demo
 npm run dev             # jalan di http://localhost:4001
+npm test                # unit test mesin PPh 21/BPJS/THR (server/test/)
 ```
 
 Akun demo setelah `npm run seed` (ganti passwordnya di luar environment lokal):
@@ -57,6 +58,8 @@ server/
 
 ## Status saat ini
 
-Fase 1 selesai: frontend dan backend sudah tersambung penuh. Login memakai email/password sungguhan, seluruh data karyawan/komponen gaji/absensi/slip/audit log tersimpan di Postgres, dan role admin vs karyawan ditegakkan di server — bukan sekadar disembunyikan di UI.
+Fase 0–2 selesai. Frontend dan backend tersambung penuh dengan login sungguhan dan RBAC di server (Fase 1). PPh 21, BPJS Kesehatan/JHT/JP, estimasi THR, dan peringatan upah minimum kini dihitung otomatis di `server/payrollEngine.js` setiap slip diterbitkan — lihat `server/test/` untuk unit test-nya (Fase 2).
 
-Belum ada: perhitungan PPh 21 & BPJS resmi (Fase 2), generate PDF server-side dan pengiriman email nyata (Fase 3), enkripsi data sensitif (Fase 4), serta test otomatis (Fase 5). Penjadwalan dan kotak masuk email di modul V3 masih simulasi lokal. Lihat PRD di atas untuk detail tiap fase.
+**Penting:** perhitungan PPh 21 memakai pendekatan progresif disetahunkan, bukan tabel TER resmi DJP (PMK 168/2023) — cukup akurat untuk estimasi, tapi perlu divalidasi/diganti sebelum dipakai pelaporan pajak sungguhan. Upah minimum juga masih satu angka nasional, bukan data UMR/UMK per daerah.
+
+Belum ada: generate PDF server-side dan pengiriman email nyata (Fase 3), enkripsi data sensitif (Fase 4), test otomatis untuk frontend (Fase 5). Penjadwalan dan kotak masuk email di modul V3 masih simulasi lokal. Lihat PRD di atas untuk detail tiap fase.

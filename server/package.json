@@ -8,7 +8,7 @@
     "start": "node index.js",
     "migrate": "node migrate.js",
     "seed": "node seed.js",
-    "test": "node --test test/"
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
