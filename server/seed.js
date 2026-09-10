@@ -5,20 +5,22 @@ import { pool } from './db.js';
 
 const COMPANY_ID = 'CO-DEMO';
 const EMPLOYEES = [
-  { id: 'EMP-001', name: 'Ahmad Subarjo', email: 'ahmad.subarjo@veloxpay.co.id', role: 'Senior Software Engineer', department: 'Engineering', baseSalary: 15500000, bankName: 'BCA', bankAccount: '8012345678', joinDate: '2023-01-15' },
-  { id: 'EMP-002', name: 'Siti Rahmawati', email: 'siti.rahma@veloxpay.co.id', role: 'UI/UX Designer', department: 'Product Design', baseSalary: 11000000, bankName: 'Mandiri', bankAccount: '131002938475', joinDate: '2023-06-10' },
-  { id: 'EMP-003', name: 'Budi Santoso', email: 'budi.santoso@veloxpay.co.id', role: 'HR Specialist', department: 'Human Resources', baseSalary: 9500000, bankName: 'BNI', bankAccount: '0482938472', joinDate: '2024-02-01' },
-  { id: 'EMP-004', name: 'Dewi Lestari', email: 'dewi.lestari@veloxpay.co.id', role: 'Finance Lead', department: 'Finance', baseSalary: 13500000, bankName: 'BCA', bankAccount: '8019876543', joinDate: '2022-11-20' },
-  { id: 'EMP-005', name: 'Rian Hidayat', email: 'rian.hidayat@veloxpay.co.id', role: 'DevOps Engineer', department: 'Engineering', baseSalary: 14000000, bankName: 'BRI', bankAccount: '03410293847', joinDate: '2024-05-12' },
+  { id: 'EMP-001', name: 'Ahmad Subarjo', email: 'ahmad.subarjo@veloxpay.co.id', role: 'Senior Software Engineer', department: 'Engineering', baseSalary: 15500000, bankName: 'BCA', bankAccount: '8012345678', joinDate: '2023-01-15', ptkpStatus: 'K/1' },
+  { id: 'EMP-002', name: 'Siti Rahmawati', email: 'siti.rahma@veloxpay.co.id', role: 'UI/UX Designer', department: 'Product Design', baseSalary: 11000000, bankName: 'Mandiri', bankAccount: '131002938475', joinDate: '2023-06-10', ptkpStatus: 'TK/0' },
+  { id: 'EMP-003', name: 'Budi Santoso', email: 'budi.santoso@veloxpay.co.id', role: 'HR Specialist', department: 'Human Resources', baseSalary: 9500000, bankName: 'BNI', bankAccount: '0482938472', joinDate: '2024-02-01', ptkpStatus: 'TK/0' },
+  { id: 'EMP-004', name: 'Dewi Lestari', email: 'dewi.lestari@veloxpay.co.id', role: 'Finance Lead', department: 'Finance', baseSalary: 13500000, bankName: 'BCA', bankAccount: '8019876543', joinDate: '2022-11-20', ptkpStatus: 'K/2' },
+  { id: 'EMP-005', name: 'Rian Hidayat', email: 'rian.hidayat@veloxpay.co.id', role: 'DevOps Engineer', department: 'Engineering', baseSalary: 14000000, bankName: 'BRI', bankAccount: '03410293847', joinDate: '2024-05-12', ptkpStatus: 'K/0' },
 ];
+// BPJS and PPh 21 are no longer seeded as manual salary components — the engine in
+// payrollEngine.js computes both automatically on every generated slip.
 const COMPONENTS = [
   { id: 'COMP-001', name: 'Tunjangan Makan', type: 'allowance', amountType: 'fixed', value: 500000, description: 'Tunjangan uang makan bulanan karyawan' },
   { id: 'COMP-002', name: 'Tunjangan Transportasi', type: 'allowance', amountType: 'fixed', value: 400000, description: 'Tunjangan operasional transportasi' },
   { id: 'COMP-003', name: 'Tunjangan Kesehatan (BPJS)', type: 'allowance', amountType: 'fixed', value: 350000, description: 'Subsidi jaminan kesehatan' },
-  { id: 'COMP-004', name: 'Potongan BPJS Ketenagakerjaan', type: 'deduction', amountType: 'percentage', value: 2, description: 'Iuran jaminan hari tua (JHT) karyawan' },
-  { id: 'COMP-005', name: 'Potongan Pajak PPh 21', type: 'deduction', amountType: 'percentage', value: 5, description: 'Pajak penghasilan pasal 21 (perhitungan resmi menyusul di Fase 2)' },
   { id: 'COMP-006', name: 'Potongan Keterlambatan', type: 'deduction', amountType: 'fixed', value: 50000, description: 'Denda keterlambatan kehadiran per hari absen/alpha' },
 ];
+// Superseded by the automatic engine — deleted below if a prior seed run created them.
+const RETIRED_COMPONENT_IDS = ['COMP-004', 'COMP-005'];
 const ATTENDANCE = [
   { employeeId: 'EMP-001', month: '2026-09', present: 21, sick: 1, leave: 0, alpha: 0, overtimeHours: 12 },
   { employeeId: 'EMP-002', month: '2026-09', present: 22, sick: 0, leave: 0, alpha: 0, overtimeHours: 5 },
@@ -39,10 +41,10 @@ async function seed() {
 
   for (const e of EMPLOYEES) {
     await pool.query(
-      `INSERT INTO employees (id, company_id, name, email, role, department, base_salary, bank_name, bank_account, join_date)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-       ON CONFLICT (id) DO NOTHING`,
-      [e.id, COMPANY_ID, e.name, e.email, e.role, e.department, e.baseSalary, e.bankName, e.bankAccount, e.joinDate]
+      `INSERT INTO employees (id, company_id, name, email, role, department, base_salary, bank_name, bank_account, join_date, ptkp_status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       ON CONFLICT (id) DO UPDATE SET ptkp_status = EXCLUDED.ptkp_status`,
+      [e.id, COMPANY_ID, e.name, e.email, e.role, e.department, e.baseSalary, e.bankName, e.bankAccount, e.joinDate, e.ptkpStatus]
     );
   }
 
@@ -53,6 +55,8 @@ async function seed() {
       [c.id, COMPANY_ID, c.name, c.type, c.amountType, c.value, c.description]
     );
   }
+
+  await pool.query('DELETE FROM salary_components WHERE id = ANY($1)', [RETIRED_COMPONENT_IDS]);
 
   for (const a of ATTENDANCE) {
     await pool.query(

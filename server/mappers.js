@@ -10,6 +10,7 @@ export const toEmployeeDTO = (r) => ({
   bankName: r.bank_name,
   bankAccount: r.bank_account,
   joinDate: r.join_date instanceof Date ? r.join_date.toISOString().slice(0, 10) : r.join_date,
+  ptkpStatus: r.ptkp_status,
 });
 
 export const toComponentDTO = (r) => ({

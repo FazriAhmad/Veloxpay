@@ -49,9 +49,11 @@ export const api = {
   me: () => request<AuthUser>('/auth/me'),
 
   listEmployees: () => request<Employee[]>('/employees'),
-  createEmployee: (emp: Omit<Employee, 'id' | 'joinDate'>) => post<Employee>('/employees', emp),
+  createEmployee: (emp: Omit<Employee, 'id' | 'joinDate'>) =>
+    post<Employee & { warnings?: string[] }>('/employees', emp),
   updateEmployee: (emp: Employee) => put<Employee>(`/employees/${emp.id}`, emp),
   deleteEmployee: (id: string) => request<void>(`/employees/${id}`, { method: 'DELETE' }),
+  getThr: (employeeId: string) => request<{ employeeName: string; amount: number }>(`/employees/${employeeId}/thr`),
 
   listComponents: () => request<SalaryComponent[]>('/components'),
   createComponent: (comp: Omit<SalaryComponent, 'id' | 'isEditable'>) =>
@@ -64,7 +66,8 @@ export const api = {
     put<Attendance>(`/attendance/${att.employeeId}/${att.month}`, att),
 
   listSlips: () => request<PayrollSlip[]>('/slips'),
-  createSlip: (slip: Omit<PayrollSlip, 'id' | 'generatedAt'>) => post<PayrollSlip>('/slips', slip),
+  createSlip: (slip: Omit<PayrollSlip, 'id' | 'generatedAt'>) =>
+    post<PayrollSlip & { warnings?: string[] }>('/slips', slip),
   updateSlipStatus: (id: string, status: PayrollSlip['status']) =>
     patch<PayrollSlip>(`/slips/${id}/status`, { status }),
   deleteSlip: (id: string) => request<void>(`/slips/${id}`, { method: 'DELETE' }),

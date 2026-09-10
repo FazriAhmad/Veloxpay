@@ -29,8 +29,14 @@ CREATE TABLE IF NOT EXISTS employees (
   bank_name       TEXT,
   bank_account    TEXT,
   join_date       DATE NOT NULL,
+  -- PTKP status per DJP (e.g. TK/0, TK/1, K/0, K/1, K/2, K/3) — drives the
+  -- non-taxable income threshold in the PPh 21 calculation. Defaults to the
+  -- most common case (single, no dependents) for existing rows.
+  ptkp_status     TEXT NOT NULL DEFAULT 'TK/0',
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS ptkp_status TEXT NOT NULL DEFAULT 'TK/0';
 
 CREATE TABLE IF NOT EXISTS salary_components (
   id            TEXT PRIMARY KEY,

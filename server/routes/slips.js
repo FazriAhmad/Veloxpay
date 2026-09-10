@@ -5,6 +5,12 @@ import { requireAuth, requireRole } from '../auth.js';
 import { toSlipDTO } from '../mappers.js';
 import { writeAuditLog } from '../auditLog.js';
 import { wrapAsync } from '../wrapAsync.js';
+import { calculatePph21Monthly, calculateBpjsEmployeeDeductions, isBelowMinimumWage } from '../payrollEngine.js';
+
+// ponytail: one company-wide floor instead of real per-province/city UMR/UMK data,
+// which changes yearly and varies by region. Swap in a regional table before this
+// drives a real compliance check. Using DKI Jakarta's 2024 UMP as a placeholder.
+const REGIONAL_MINIMUM_WAGE = 5_067_381;
 
 export const slipsRouter = Router();
 slipsRouter.use(requireAuth);
@@ -29,7 +35,7 @@ slipsRouter.get('/', wrapAsync(async (req, res) => {
 slipsRouter.post('/', requireRole('admin'), wrapAsync(async (req, res) => {
   const {
     employeeId, employeeName, employeeRole, employeeDepartment, month, baseSalary,
-    bankName, bankAccount, allowances = [], deductions = [], overtimePay = 0, overtimeHours = 0,
+    bankName, bankAccount, allowances = [], deductions: customDeductions = [], overtimePay = 0, overtimeHours = 0,
   } = req.body || {};
   if (!employeeId || !month || !baseSalary) {
     return res.status(400).json({ error: 'employeeId, month, dan baseSalary wajib diisi.' });
@@ -44,9 +50,30 @@ slipsRouter.post('/', requireRole('admin'), wrapAsync(async (req, res) => {
     return res.status(409).json({ error: 'Slip untuk karyawan dan periode ini sudah ada.' });
   }
 
+  const empRow = await pool.query('SELECT ptkp_status FROM employees WHERE id=$1 AND company_id=$2', [
+    employeeId,
+    req.auth.companyId,
+  ]);
+  if (empRow.rows.length === 0) return res.status(404).json({ error: 'Karyawan tidak ditemukan.' });
+  const ptkpStatus = empRow.rows[0].ptkp_status;
+
   const allowanceTotal = allowances.reduce((sum, a) => sum + Number(a.amount), 0);
+  const monthlyGrossForTax = Number(baseSalary) + Number(overtimePay) + allowanceTotal;
+
+  // PPh 21 and BPJS are computed here, server-side, from statutory rates — not taken
+  // from client input — so they can't be edited away or left out from the UI.
+  const pph21 = calculatePph21Monthly(monthlyGrossForTax, ptkpStatus);
+  const bpjs = calculateBpjsEmployeeDeductions(Number(baseSalary));
+
+  const statutoryDeductions = [
+    ...(pph21 > 0 ? [{ name: 'PPh 21 (estimasi)', amount: pph21 }] : []),
+    { name: 'BPJS Kesehatan (1%)', amount: bpjs.kesehatan },
+    { name: 'BPJS Ketenagakerjaan - JHT (2%)', amount: bpjs.jht },
+    { name: 'BPJS Ketenagakerjaan - JP (1%)', amount: bpjs.jp },
+  ];
+  const deductions = [...customDeductions, ...statutoryDeductions];
   const deductionTotal = deductions.reduce((sum, d) => sum + Number(d.amount), 0);
-  const grossSalary = Number(baseSalary) + Number(overtimePay) + allowanceTotal;
+  const grossSalary = monthlyGrossForTax;
   const netSalary = grossSalary - deductionTotal;
 
   const id = `PAY-${month.replace('-', '')}-${randomUUID().slice(0, 4).toUpperCase()}`;
@@ -60,8 +87,20 @@ slipsRouter.post('/', requireRole('admin'), wrapAsync(async (req, res) => {
      bankName, bankAccount, JSON.stringify(allowances), JSON.stringify(deductions), overtimePay, overtimeHours,
      grossSalary, netSalary]
   );
-  await writeAuditLog(req.auth, 'GENERATE_PAYROLL', `Membuat draf slip gaji untuk ${employeeName} periode ${month}`);
-  res.status(201).json(toSlipDTO(result.rows[0]));
+  await writeAuditLog(
+    req.auth,
+    'GENERATE_PAYROLL',
+    `Membuat draf slip gaji untuk ${employeeName} periode ${month} (PPh21: ${pph21}, BPJS: ${bpjs.total})`
+  );
+
+  const warnings = [];
+  if (isBelowMinimumWage(Number(baseSalary), REGIONAL_MINIMUM_WAGE)) {
+    warnings.push(
+      `Gaji pokok di bawah upah minimum acuan (${REGIONAL_MINIMUM_WAGE.toLocaleString('id-ID')}). Verifikasi dengan UMR/UMK daerah karyawan.`
+    );
+  }
+
+  res.status(201).json({ ...toSlipDTO(result.rows[0]), warnings });
 }));
 
 // Approval workflow — never triggers any transfer, only changes the record's status.

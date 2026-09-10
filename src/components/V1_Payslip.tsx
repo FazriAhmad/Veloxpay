@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Employee, Attendance, PayrollSlip, SalaryComponent } from '../lib/mockData';
+import { Employee, Attendance, PayrollSlip, SalaryComponent, PTKP_STATUSES } from '../lib/mockData';
 import { CustomDropdown } from './CustomDropdown';
 import { PayslipDocument } from './PayslipDocument';
+import { api } from '../lib/api';
 
 interface V1PayslipProps {
   employees: Employee[];
@@ -52,6 +53,7 @@ export const V1_Payslip: React.FC<V1PayslipProps> = ({
   const [empBaseSalary, setEmpBaseSalary] = useState('');
   const [empBankName, setEmpBankName] = useState('BCA');
   const [empBankAccount, setEmpBankAccount] = useState('');
+  const [empPtkpStatus, setEmpPtkpStatus] = useState<string>('TK/0');
 
   // Payroll Input State
   const [selectedEmpId, setSelectedEmpId] = useState('');
@@ -87,6 +89,7 @@ export const V1_Payslip: React.FC<V1PayslipProps> = ({
     setEmpBaseSalary('');
     setEmpBankName('BCA');
     setEmpBankAccount('');
+    setEmpPtkpStatus('TK/0');
     setIsEmpModalOpen(true);
   };
 
@@ -101,7 +104,23 @@ export const V1_Payslip: React.FC<V1PayslipProps> = ({
     setEmpBaseSalary(emp.baseSalary.toString());
     setEmpBankName(emp.bankName);
     setEmpBankAccount(emp.bankAccount);
+    setEmpPtkpStatus(emp.ptkpStatus || 'TK/0');
     setIsEmpModalOpen(true);
+  };
+
+  // THR is a once-a-year allowance, not part of the monthly slip cycle — this just
+  // estimates it on demand rather than generating a slip.
+  const handleCalculateThr = async (empId: string) => {
+    try {
+      const { employeeName, amount } = await api.getThr(empId);
+      addToast(
+        `Estimasi THR — ${employeeName}`,
+        `Rp ${amount.toLocaleString('id-ID')} (pro-rata masa kerja per hari ini).`,
+        'info'
+      );
+    } catch (err) {
+      addToast('Gagal Menghitung THR', err instanceof Error ? err.message : 'Terjadi kesalahan.', 'error');
+    }
   };
 
   const handleEmpSubmit = (e: React.FormEvent) => {
@@ -126,6 +145,7 @@ export const V1_Payslip: React.FC<V1PayslipProps> = ({
         baseSalary: salaryNum,
         bankName: empBankName,
         bankAccount: empBankAccount,
+        ptkpStatus: empPtkpStatus,
       });
       addToast('Karyawan Ditambahkan', `Karyawan ${empName} berhasil didaftarkan.`, 'success');
     } else if (empModalMode === 'edit' && editingEmp) {
@@ -138,6 +158,7 @@ export const V1_Payslip: React.FC<V1PayslipProps> = ({
         baseSalary: salaryNum,
         bankName: empBankName,
         bankAccount: empBankAccount,
+        ptkpStatus: empPtkpStatus,
       });
       addToast('Data Diperbarui', `Data karyawan ${empName} berhasil disimpan.`, 'success');
     }
@@ -436,6 +457,13 @@ export const V1_Payslip: React.FC<V1PayslipProps> = ({
                       </td>
                       <td className="py-4 px-6">
                         <div className="flex items-center justify-center gap-2">
+                          <button
+                            onClick={() => handleCalculateThr(emp.id)}
+                            className="p-2 text-slate-500 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-all"
+                            title="Hitung Estimasi THR"
+                          >
+                            <i className="fi fi-rr-gift text-xs" />
+                          </button>
                           <button
                             onClick={() => openEditEmpModal(emp)}
                             className="p-2 text-slate-500 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-all"
@@ -936,6 +964,20 @@ export const V1_Payslip: React.FC<V1PayslipProps> = ({
                       placeholder="e.g. 8012345678"
                       className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-primary-500 focus:bg-white transition-all"
                     />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block text-xs font-medium text-slate-500 mb-1">
+                      Status PTKP (untuk hitung PPh 21)
+                    </label>
+                    <select
+                      value={empPtkpStatus}
+                      onChange={(e) => setEmpPtkpStatus(e.target.value)}
+                      className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-primary-500 focus:bg-white transition-all"
+                    >
+                      {PTKP_STATUSES.map((status) => (
+                        <option key={status} value={status}>{status}</option>
+                      ))}
+                    </select>
                   </div>
                 </div>
 

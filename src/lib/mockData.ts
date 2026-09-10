@@ -12,7 +12,12 @@ export interface Employee {
   bankName: string;
   bankAccount: string;
   joinDate: string;
+  // PTKP status per DJP (TK/0..3 = single with N dependents, K/0..3 = married with
+  // N dependents) — drives the PPh 21 non-taxable income threshold.
+  ptkpStatus: string;
 }
+
+export const PTKP_STATUSES = ['TK/0', 'TK/1', 'TK/2', 'TK/3', 'K/0', 'K/1', 'K/2', 'K/3'] as const;
 
 export interface Attendance {
   employeeId: string;

@@ -145,7 +145,8 @@ function App() {
   // --- DATA HANDLERS ---
   const handleAddEmployee = (emp: Omit<Employee, 'id' | 'joinDate'>) =>
     runAction(async () => {
-      await api.createEmployee(emp);
+      const result = await api.createEmployee(emp);
+      result.warnings?.forEach((w) => addToast('Perhatian', w, 'warning'));
     }, 'Gagal Menambah Karyawan');
 
   const handleEditEmployee = (emp: Employee) =>
@@ -160,7 +161,8 @@ function App() {
 
   const handleGenerateSlip = (slip: Omit<PayrollSlip, 'id' | 'generatedAt'>) =>
     runAction(async () => {
-      await api.createSlip(slip);
+      const result = await api.createSlip(slip);
+      result.warnings?.forEach((w) => addToast('Perhatian', w, 'warning'));
     }, 'Gagal Membuat Slip');
 
   const handleDeleteSlip = (id: string) =>
