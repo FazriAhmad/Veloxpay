@@ -6,12 +6,10 @@ Lihat [PRD & roadmap produk](https://claude.ai/code/artifact/1e795e32-83fe-4db4-
 
 ## Stack
 
-- React 19 + TypeScript, Vite 7
-- Tailwind CSS 4 (`@tailwindcss/vite`)
-- framer-motion untuk transisi
-- Flaticon Uicons untuk ikon
+- Frontend: React 19 + TypeScript, Vite 7, Tailwind CSS 4, framer-motion, Flaticon Uicons
+- Backend: Node.js (plain JS, ES modules) + Express + `pg` langsung ke Postgres — tanpa ORM
 
-## Menjalankan secara lokal
+## Menjalankan frontend
 
 ```bash
 npm install
@@ -20,6 +18,26 @@ npm run dev
 
 Build produksi: `npm run build`. Lint: `npm run lint`.
 
+## Menjalankan backend
+
+Perlu Postgres lokal dengan database bernama `veloxpay` sudah dibuat.
+
+```bash
+cd server
+npm install
+cp .env.example .env   # isi DATABASE_URL & JWT_SECRET sesuai environment Anda
+npm run migrate         # buat semua tabel
+npm run seed            # isi data contoh + akun login demo
+npm run dev             # jalan di http://localhost:4001
+```
+
+Akun demo setelah `npm run seed` (ganti passwordnya di luar environment lokal):
+
+| Role     | Email                          | Password        |
+|----------|---------------------------------|------------------|
+| Admin    | dewi.lestari@veloxpay.co.id    | admin12345       |
+| Karyawan | ahmad.subarjo@veloxpay.co.id   | employee12345    |
+
 ## Struktur
 
 ```
@@ -27,8 +45,12 @@ src/
   components/       # LandingPage, V1_Payslip, V2_Management, V3_Automation, dst.
   lib/mockData.ts   # Tipe data & data contoh
   lib/format.ts     # Util format mata uang
+server/
+  routes/           # auth, users, employees, components, attendance, slips, audit-logs
+  schema.sql        # Skema Postgres (companies, users, employees, salary_components,
+                     # attendance, payroll_slips, audit_logs — semua multi-tenant per company_id)
 ```
 
 ## Status saat ini
 
-Frontend berjalan penuh dengan data contoh (localStorage). Backend, autentikasi, dan mesin kepatuhan pajak/BPJS sedang dibangun bertahap — lihat PRD di atas untuk detail tiap fase.
+Backend (Postgres + Express, auth bcrypt/JWT, RBAC per-role) sudah berjalan dan teruji langsung ke database di `server/`. Frontend React masih membaca dari localStorage dan belum tersambung ke API ini — itu langkah berikutnya. Mesin kepatuhan pajak PPh 21/BPJS juga belum ada. Lihat PRD di atas untuk detail tiap fase.
