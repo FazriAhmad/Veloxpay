@@ -89,6 +89,21 @@ CREATE TABLE IF NOT EXISTS payroll_slips (
   generated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Real record of every email delivery attempt (payslip notifications). Distinct from
+-- audit_logs (which record admin actions) — this is specifically what was sent to
+-- whom and whether it worked, honestly marked 'skipped' when SMTP isn't configured
+-- rather than pretending an email went out.
+CREATE TABLE IF NOT EXISTS notification_log (
+  id            TEXT PRIMARY KEY,
+  company_id    TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  slip_id       TEXT REFERENCES payroll_slips(id) ON DELETE CASCADE,
+  to_email      TEXT NOT NULL,
+  subject       TEXT NOT NULL,
+  status        TEXT NOT NULL CHECK (status IN ('sent', 'failed', 'skipped')),
+  detail        TEXT NOT NULL DEFAULT '',
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS audit_logs (
   id            TEXT PRIMARY KEY,
   company_id    TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
@@ -104,3 +119,4 @@ CREATE INDEX IF NOT EXISTS idx_employees_company ON employees(company_id);
 CREATE INDEX IF NOT EXISTS idx_slips_company ON payroll_slips(company_id);
 CREATE INDEX IF NOT EXISTS idx_slips_employee ON payroll_slips(employee_id);
 CREATE INDEX IF NOT EXISTS idx_audit_company ON audit_logs(company_id);
+CREATE INDEX IF NOT EXISTS idx_notification_company ON notification_log(company_id);

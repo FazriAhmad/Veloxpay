@@ -7,11 +7,11 @@ import {
   PayrollSlip,
   AuditLog,
   ScheduledConfig,
-  SimulatedEmail,
+  NotificationLogEntry,
   INITIAL_SCHEDULED_CONFIG,
-  INITIAL_EMAILS,
 } from './lib/mockData';
 import { api, setToken, getToken, AuthUser } from './lib/api';
+import { saveBlob } from './lib/download';
 import { LandingPage } from './components/LandingPage';
 import { LoginPage } from './components/LoginPage';
 import { V1_Payslip } from './components/V1_Payslip';
@@ -33,25 +33,18 @@ function App() {
   const [components, setComponents] = useState<SalaryComponent[]>([]);
   const [slips, setSlips] = useState<PayrollSlip[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [notifications, setNotifications] = useState<NotificationLogEntry[]>([]);
 
-  // Scheduler config and the email inbox are still local mocks — real scheduling and
-  // email delivery arrive in Phase 3, so they stay in localStorage until then.
+  // Real cron-based scheduling is a Phase 6 backlog item — this toggle is still a
+  // local mock; it doesn't cause anything to actually run on a schedule yet.
   const [scheduledConfig, setScheduledConfig] = useState<ScheduledConfig>(() => {
     const saved = localStorage.getItem('velox_scheduled_config');
     return saved ? JSON.parse(saved) : INITIAL_SCHEDULED_CONFIG;
-  });
-  const [simulatedEmails, setSimulatedEmails] = useState<SimulatedEmail[]>(() => {
-    const saved = localStorage.getItem('velox_emails');
-    return saved ? JSON.parse(saved) : INITIAL_EMAILS;
   });
 
   useEffect(() => {
     localStorage.setItem('velox_scheduled_config', JSON.stringify(scheduledConfig));
   }, [scheduledConfig]);
-
-  useEffect(() => {
-    localStorage.setItem('velox_emails', JSON.stringify(simulatedEmails));
-  }, [simulatedEmails]);
 
   // --- TOAST NOTIFICATIONS ---
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -72,18 +65,20 @@ function App() {
   // Refetches everything the signed-in user is allowed to see. Called after every
   // mutation so the UI always reflects what the server actually stored.
   const loadData = useCallback(async (role: AuthUser['role']) => {
-    const [emps, atts, comps, slps, logs] = await Promise.all([
+    const [emps, atts, comps, slps, logs, notifs] = await Promise.all([
       api.listEmployees(),
       api.listAttendance(),
       api.listComponents(),
       api.listSlips(),
       role === 'admin' ? api.listAuditLogs() : Promise.resolve([] as AuditLog[]),
+      api.listNotifications(),
     ]);
     setEmployees(emps);
     setAttendance(atts);
     setComponents(comps);
     setSlips(slps);
     setAuditLogs(logs);
+    setNotifications(notifs);
   }, []);
 
   // Restore an existing session on refresh instead of dumping the user back to the landing page.
@@ -138,6 +133,7 @@ function App() {
     setComponents([]);
     setSlips([]);
     setAuditLogs([]);
+    setNotifications([]);
     setCurrentView('landing');
     addToast('Keluar', 'Sesi Anda telah diakhiri.', 'info');
   };
@@ -201,30 +197,22 @@ function App() {
 
   // Marks every approved slip as paid. VeloxPay never moves money — this records the
   // admin's confirmation that payment already happened through the company's bank.
+  // The server sends the real payslip email (or honestly logs why it couldn't) as
+  // part of the same status-update call — see PATCH /slips/:id/status.
   const handleMarkAllPaid = () =>
     runAction(async () => {
       const approved = slips.filter((s) => s.status === 'Approved');
       if (approved.length === 0) return;
-
       await Promise.all(approved.map((s) => api.updateSlipStatus(s.id, 'Paid')));
-
-      const newEmails: SimulatedEmail[] = approved.map((s) => {
-        const emp = employees.find((e) => e.id === s.employeeId);
-        return {
-          id: `EM-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
-          to: emp?.email || `${s.employeeName.toLowerCase().replace(/\s+/g, '')}@veloxpay.co.id`,
-          subject: 'Slip Gaji Digital VeloxPay - September 2026',
-          body: `Halo ${s.employeeName},\n\nSlip gaji Anda untuk periode September 2026 telah terbit dan ditandai sudah dibayar oleh tim Finance.\n\nSilakan login ke portal VeloxPay Anda untuk mengunduh dokumen lengkapnya.\n\nTerima kasih,\nVeloxPay`,
-          sentAt: new Date().toISOString(),
-          isRead: false,
-          pdfId: s.id,
-        };
-      });
-      setSimulatedEmails((prev) => [...newEmails, ...prev]);
     }, 'Gagal Menandai Slip Dibayar');
 
-  const handleReadEmail = (id: string) => {
-    setSimulatedEmails((prev) => prev.map((e) => (e.id === id ? { ...e, isRead: true } : e)));
+  const handleDownloadSlipPdf = async (slip: PayrollSlip) => {
+    try {
+      const blob = await api.downloadSlipPdf(slip.id);
+      saveBlob(blob, `${slip.id}.pdf`);
+    } catch (err) {
+      addToast('Gagal Mengunduh PDF', err instanceof Error ? err.message : 'Terjadi kesalahan.', 'error');
+    }
   };
 
   // Quick action: view slip from email link
@@ -431,6 +419,7 @@ function App() {
                       onDeleteEmployee={handleDeleteEmployee}
                       onGenerateSlip={handleGenerateSlip}
                       onDeleteSlip={handleDeleteSlip}
+                      onDownloadPdf={handleDownloadSlipPdf}
                       addToast={addToast}
                     />
                   )}
@@ -454,16 +443,13 @@ function App() {
 
                   {activeTab === 'v3' && (
                     <V3_Automation
-                      employees={employees}
                       slips={slips}
                       auditLogs={auditLogs}
                       scheduledConfig={scheduledConfig}
-                      simulatedEmails={simulatedEmails}
+                      notifications={notifications}
                       activeRole={activeRole}
-                      currentEmployeeId={user?.employeeId}
                       onUpdateScheduledConfig={handleUpdateScheduledConfig}
                       onDisbursePayroll={handleMarkAllPaid}
-                      onReadEmail={handleReadEmail}
                       addToast={addToast}
                       onViewSlipFromEmail={handleViewSlipFromEmail}
                     />
@@ -494,13 +480,10 @@ function App() {
                 </div>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => {
-                      addToast('Mencetak Slip', 'Membuka dialog pencetakan dokumen...', 'info');
-                      window.print();
-                    }}
+                    onClick={() => viewingSlip && handleDownloadSlipPdf(viewingSlip)}
                     className="px-4 py-2 text-xs font-semibold text-white bg-primary-600 hover:bg-primary-700 rounded-xl shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
                   >
-                    <i className="fi fi-rr-download" /> Cetak / PDF
+                    <i className="fi fi-rr-download" /> Unduh PDF
                   </button>
                   <button
                     onClick={() => setViewingSlip(null)}

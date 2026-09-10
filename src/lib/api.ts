@@ -1,4 +1,4 @@
-import { Employee, Attendance, SalaryComponent, PayrollSlip, AuditLog } from './mockData';
+import { Employee, Attendance, SalaryComponent, PayrollSlip, AuditLog, NotificationLogEntry } from './mockData';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4001';
 const TOKEN_KEY = 'velox_token';
@@ -71,6 +71,15 @@ export const api = {
   updateSlipStatus: (id: string, status: PayrollSlip['status']) =>
     patch<PayrollSlip>(`/slips/${id}/status`, { status }),
   deleteSlip: (id: string) => request<void>(`/slips/${id}`, { method: 'DELETE' }),
+  // Blob response, not JSON — bypasses `request` and attaches the auth header directly.
+  downloadSlipPdf: async (id: string): Promise<Blob> => {
+    const res = await fetch(`${BASE_URL}/slips/${id}/pdf`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    });
+    if (!res.ok) throw new Error(`Gagal mengunduh PDF (${res.status}).`);
+    return res.blob();
+  },
 
   listAuditLogs: () => request<AuditLog[]>('/audit-logs'),
+  listNotifications: () => request<NotificationLogEntry[]>('/notifications'),
 };

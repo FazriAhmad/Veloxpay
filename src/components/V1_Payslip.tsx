@@ -17,6 +17,7 @@ interface V1PayslipProps {
   onDeleteEmployee: (id: string) => void;
   onGenerateSlip: (slip: Omit<PayrollSlip, 'id' | 'generatedAt'>) => void;
   onDeleteSlip: (id: string) => void;
+  onDownloadPdf: (slip: PayrollSlip) => Promise<void>;
   addToast: (title: string, message: string, type: 'success' | 'error' | 'info' | 'warning') => void;
 }
 
@@ -32,6 +33,7 @@ export const V1_Payslip: React.FC<V1PayslipProps> = ({
   onDeleteEmployee,
   onGenerateSlip,
   onDeleteSlip,
+  onDownloadPdf,
   addToast,
 }) => {
   // "employees" and "input" are admin-only views, so an employee must start on the
@@ -296,21 +298,15 @@ export const V1_Payslip: React.FC<V1PayslipProps> = ({
     setActiveSubTab('history');
   };
 
-  // Simulated PDF Download
-  const handleDownloadPDF = (slip: PayrollSlip) => {
+  // Fetches the real, server-generated PDF (see server/pdf.js) — no more window.print().
+  const handleDownloadPDF = async (slip: PayrollSlip) => {
     setIsDownloading(true);
-    addToast('Memproses PDF', 'Sedang mengompilasi dokumen slip gaji digital...', 'info');
-    
-    setTimeout(() => {
-      setIsDownloading(false);
+    try {
+      await onDownloadPdf(slip);
       addToast('PDF Berhasil Diunduh', `Slip gaji ${slip.employeeName} - ${slip.month}.pdf berhasil disimpan.`, 'success');
-      
-      // Real window print layout trigger
-      const printContent = document.getElementById('printable-payslip');
-      if (printContent) {
-        window.print();
-      }
-    }, 2000);
+    } finally {
+      setIsDownloading(false);
+    }
   };
 
   // Filtered Slips for History
@@ -402,8 +398,10 @@ export const V1_Payslip: React.FC<V1PayslipProps> = ({
         )}
       </div>
 
-      {/* SUBTAB CONTENT */}
-      <AnimatePresence mode="wait">
+      {/* SUBTAB CONTENT — no AnimatePresence mode="wait" here: under React 19
+          StrictMode it can leave the exiting sub-tab mounted forever, so switching
+          sub-tabs looked like it silently did nothing. See App.tsx for the same fix. */}
+      <>
         {/* EMPLOYEES LIST SUBTAB */}
         {activeSubTab === 'employees' && activeRole === 'admin' && (
           <motion.div
@@ -860,7 +858,7 @@ export const V1_Payslip: React.FC<V1PayslipProps> = ({
             )}
           </motion.div>
         )}
-      </AnimatePresence>
+      </>
 
       {/* EMPLOYEE MODAL (ADD / EDIT) */}
       <AnimatePresence>

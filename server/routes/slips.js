@@ -6,6 +6,10 @@ import { toSlipDTO } from '../mappers.js';
 import { writeAuditLog } from '../auditLog.js';
 import { wrapAsync } from '../wrapAsync.js';
 import { calculatePph21Monthly, calculateBpjsEmployeeDeductions, isBelowMinimumWage } from '../payrollEngine.js';
+import { renderPayslipPdf } from '../pdf.js';
+import { sendPayslipEmail } from '../mailer.js';
+
+const formatIDR = (n) => `Rp ${Math.round(Number(n)).toLocaleString('id-ID')}`;
 
 // ponytail: one company-wide floor instead of real per-province/city UMR/UMK data,
 // which changes yearly and varies by region. Swap in a regional table before this
@@ -129,7 +133,70 @@ slipsRouter.patch('/:id/status', requireRole('admin'), wrapAsync(async (req, res
       : `Mengubah status slip ${slip.id} (${slip.employee_name}) menjadi ${status}`;
   await writeAuditLog(req.auth, actionLabel, detail);
 
+  // A slip becoming "Paid" is the trigger to actually notify the employee — real PDF
+  // attached, real (or honestly-skipped) email. Failures here don't roll back the
+  // status change: the payroll record is the source of truth, the email is best-effort.
+  if (status === 'Paid') {
+    const empRow = await pool.query('SELECT email FROM employees WHERE id=$1', [slip.employee_id]);
+    const toEmail = empRow.rows[0]?.email;
+    const slipDto = toSlipDTO(slip);
+
+    let mailResult;
+    try {
+      const pdfBuffer = await renderPayslipPdf(slipDto);
+      mailResult = await sendPayslipEmail({
+        to: toEmail,
+        subject: `Slip Gaji Digital VeloxPay - ${slip.month}`,
+        html: `<p>Halo ${slip.employee_name},</p><p>Slip gaji Anda untuk periode ${slip.month} telah terbit dan ditandai sudah dibayar. Take-home pay: <strong>${formatIDR(slip.net_salary)}</strong>.</p><p>Dokumen PDF terlampir.</p><p>— VeloxPay</p>`,
+        attachment: { filename: `${slip.id}.pdf`, buffer: pdfBuffer },
+      });
+    } catch (err) {
+      mailResult = { status: 'failed', detail: `Gagal membuat PDF: ${err.message}` };
+    }
+
+    await pool.query(
+      `INSERT INTO notification_log (id, company_id, slip_id, to_email, subject, status, detail)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [
+        `NOTIF-${randomUUID().slice(0, 8)}`,
+        req.auth.companyId,
+        slip.id,
+        toEmail || '(tidak ada email)',
+        `Slip Gaji Digital VeloxPay - ${slip.month}`,
+        mailResult.status,
+        mailResult.detail,
+      ]
+    );
+    await writeAuditLog(
+      req.auth,
+      'SEND_EMAIL_PAYSLIP',
+      `Notifikasi email slip ${slip.id} ke ${toEmail || '(tidak ada email)'}: ${mailResult.status} — ${mailResult.detail}`
+    );
+  }
+
   res.json(toSlipDTO(slip));
+}));
+
+// Streams the same PDF that gets emailed on payment — this is what "Unduh PDF" now
+// actually downloads, generated fresh from the stored slip data.
+slipsRouter.get('/:id/pdf', wrapAsync(async (req, res) => {
+  const scopedToSelf = req.auth.role === 'employee';
+  const result = scopedToSelf
+    ? await pool.query(`SELECT ${SLIP_COLUMNS} FROM payroll_slips WHERE id=$1 AND company_id=$2 AND employee_id=$3`, [
+        req.params.id,
+        req.auth.companyId,
+        req.auth.employeeId,
+      ])
+    : await pool.query(`SELECT ${SLIP_COLUMNS} FROM payroll_slips WHERE id=$1 AND company_id=$2`, [
+        req.params.id,
+        req.auth.companyId,
+      ]);
+  if (result.rows.length === 0) return res.status(404).json({ error: 'Slip tidak ditemukan.' });
+
+  const pdfBuffer = await renderPayslipPdf(toSlipDTO(result.rows[0]));
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${req.params.id}.pdf"`);
+  res.send(pdfBuffer);
 }));
 
 slipsRouter.delete('/:id', requireRole('admin'), wrapAsync(async (req, res) => {

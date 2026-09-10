@@ -1,6 +1,7 @@
-// Shared domain types. Employee/attendance/component/slip/audit data now comes from the
-// API (see api.ts); only the scheduler config and email inbox below are still local mocks,
-// pending real scheduling and email delivery in Phase 3.
+// Shared domain types. Employee/attendance/component/slip/audit/notification data all
+// come from the API (see api.ts); only the scheduler config below is still a local
+// mock — real cron-based scheduling is a Phase 6 backlog item, not Phase 3's scope
+// (which covers documents/notifications for actions already triggered by an admin).
 
 export interface Employee {
   id: string;
@@ -79,16 +80,18 @@ export interface ScheduledConfig {
   notifyEmail: boolean;
 }
 
-export interface SimulatedEmail {
+// A real record of one email delivery attempt — status is honest ('skipped' when
+// SMTP isn't configured, 'failed' on an actual send error), never a fabricated
+// message body pretending to be received mail.
+export interface NotificationLogEntry {
   id: string;
+  slipId?: string;
   to: string;
   subject: string;
-  body: string;
+  status: 'sent' | 'failed' | 'skipped';
+  detail: string;
   sentAt: string;
-  isRead: boolean;
-  pdfId?: string;
 }
-
 
 export const INITIAL_SCHEDULED_CONFIG: ScheduledConfig = {
   isEnabled: true,
@@ -97,24 +100,3 @@ export const INITIAL_SCHEDULED_CONFIG: ScheduledConfig = {
   autoApprove: false,
   notifyEmail: true
 };
-
-export const INITIAL_EMAILS: SimulatedEmail[] = [
-  {
-    id: "EM-001",
-    to: "ahmad.subarjo@veloxpay.co.id",
-    subject: "Slip Gaji Digital VeloxPay - Agustus 2026",
-    body: "Halo Ahmad Subarjo,\n\nSlip gaji Anda untuk periode Agustus 2026 telah terbit. Silakan login ke portal VeloxPay Anda untuk melihat rincian lengkap atau mengunduh dokumen PDF.\n\nDetail Singkat:\n- Gaji Pokok: IDR 15,500,000\n- Take Home Pay: IDR 16,790,000\n\nTerima kasih,\nVeloxPay Automated System",
-    sentAt: "2026-08-25T00:10:00.000Z",
-    isRead: false,
-    pdfId: "PAY-202608-001"
-  },
-  {
-    id: "EM-002",
-    to: "siti.rahma@veloxpay.co.id",
-    subject: "Slip Gaji Digital VeloxPay - Agustus 2026",
-    body: "Halo Siti Rahmawati,\n\nSlip gaji Anda untuk periode Agustus 2026 telah terbit. Silakan login ke portal VeloxPay Anda untuk melihat rincian lengkap atau mengunduh dokumen PDF.\n\nDetail Singkat:\n- Gaji Pokok: IDR 11,000,000\n- Take Home Pay: IDR 11,785,000\n\nTerima kasih,\nVeloxPay Automated System",
-    sentAt: "2026-08-25T00:10:30.000Z",
-    isRead: true,
-    pdfId: "PAY-202608-002"
-  }
-];

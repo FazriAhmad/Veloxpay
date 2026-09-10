@@ -235,8 +235,9 @@ export const V2_Management: React.FC<V2ManagementProps> = ({
         )}
       </div>
 
-      {/* SUBTAB CONTENT */}
-      <AnimatePresence mode="wait">
+      {/* SUBTAB CONTENT — no AnimatePresence mode="wait": under React 19 StrictMode
+          it can leave the exiting sub-tab mounted forever (see App.tsx for the same fix). */}
+      <>
         {/* DASHBOARD SUBTAB */}
         {activeSubTab === 'dashboard' && (
           <motion.div
@@ -729,7 +730,7 @@ export const V2_Management: React.FC<V2ManagementProps> = ({
             )}
           </motion.div>
         )}
-      </AnimatePresence>
+      </>
 
       {/* SALARY COMPONENT MODAL (ADD) */}
       <AnimatePresence>

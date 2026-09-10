@@ -55,6 +55,16 @@ export const toSlipDTO = (r) => ({
   approvedBy: r.approved_by || undefined,
 });
 
+export const toNotificationDTO = (r) => ({
+  id: r.id,
+  slipId: r.slip_id || undefined,
+  to: r.to_email,
+  subject: r.subject,
+  status: r.status,
+  detail: r.detail,
+  sentAt: r.created_at.toISOString(),
+});
+
 export const toAuditLogDTO = (r) => ({
   id: r.id,
   timestamp: r.created_at.toISOString(),
