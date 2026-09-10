@@ -11,10 +11,14 @@ Lihat [PRD & roadmap produk](https://claude.ai/code/artifact/1e795e32-83fe-4db4-
 
 ## Menjalankan frontend
 
+Backend harus jalan lebih dulu (lihat bagian berikutnya) — frontend mengambil semua datanya dari API.
+
 ```bash
 npm install
 npm run dev
 ```
+
+Kalau API tidak berada di `http://localhost:4001`, salin `.env.example` jadi `.env` dan sesuaikan `VITE_API_URL`.
 
 Build produksi: `npm run build`. Lint: `npm run lint`.
 
@@ -53,4 +57,6 @@ server/
 
 ## Status saat ini
 
-Backend (Postgres + Express, auth bcrypt/JWT, RBAC per-role) sudah berjalan dan teruji langsung ke database di `server/`. Frontend React masih membaca dari localStorage dan belum tersambung ke API ini — itu langkah berikutnya. Mesin kepatuhan pajak PPh 21/BPJS juga belum ada. Lihat PRD di atas untuk detail tiap fase.
+Fase 1 selesai: frontend dan backend sudah tersambung penuh. Login memakai email/password sungguhan, seluruh data karyawan/komponen gaji/absensi/slip/audit log tersimpan di Postgres, dan role admin vs karyawan ditegakkan di server — bukan sekadar disembunyikan di UI.
+
+Belum ada: perhitungan PPh 21 & BPJS resmi (Fase 2), generate PDF server-side dan pengiriman email nyata (Fase 3), enkripsi data sensitif (Fase 4), serta test otomatis (Fase 5). Penjadwalan dan kotak masuk email di modul V3 masih simulasi lokal. Lihat PRD di atas untuk detail tiap fase.
