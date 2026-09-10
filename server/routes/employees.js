@@ -6,6 +6,7 @@ import { toEmployeeDTO } from '../mappers.js';
 import { writeAuditLog } from '../auditLog.js';
 import { wrapAsync } from '../wrapAsync.js';
 import { calculateThr, isBelowMinimumWage, getPtkpStatuses } from '../payrollEngine.js';
+import { encryptField } from '../crypto.js';
 
 // See routes/slips.js for why this is a single placeholder floor rather than real
 // per-region UMR/UMK data.
@@ -41,8 +42,8 @@ employeesRouter.post('/', requireRole('admin'), wrapAsync(async (req, res) => {
   const result = await pool.query(
     `INSERT INTO employees (id, company_id, name, email, role, department, base_salary, bank_name, bank_account, join_date, ptkp_status)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
-    [id, req.auth.companyId, name, email || null, role, department, baseSalary, bankName || null, bankAccount || null,
-     joinDate || new Date(), ptkpStatus || 'TK/0']
+    [id, req.auth.companyId, name, email || null, role, department, baseSalary, bankName || null,
+     encryptField(bankAccount || null), joinDate || new Date(), ptkpStatus || 'TK/0']
   );
   await writeAuditLog(req.auth, 'ADD_EMPLOYEE', `Mendaftarkan karyawan baru ${name} dengan ID ${id}`);
 
@@ -65,7 +66,7 @@ employeesRouter.put('/:id', requireRole('admin'), wrapAsync(async (req, res) => 
     `UPDATE employees SET name=$1, email=$2, role=$3, department=$4, base_salary=$5, bank_name=$6, bank_account=$7,
        ptkp_status = COALESCE($8, ptkp_status)
      WHERE id=$9 AND company_id=$10 RETURNING *`,
-    [name, email || null, role, department, baseSalary, bankName || null, bankAccount || null, ptkpStatus || null,
+    [name, email || null, role, department, baseSalary, bankName || null, encryptField(bankAccount || null), ptkpStatus || null,
      req.params.id, req.auth.companyId]
   );
   if (result.rows.length === 0) return res.status(404).json({ error: 'Karyawan tidak ditemukan.' });

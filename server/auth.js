@@ -4,6 +4,9 @@ import 'dotenv/config';
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) throw new Error('JWT_SECRET is not set in server/.env');
 
+export const MIN_PASSWORD_LENGTH = 8;
+export const isPasswordTooShort = (password) => !password || password.length < MIN_PASSWORD_LENGTH;
+
 export function signToken(user) {
   return jwt.sign(
     { userId: user.id, companyId: user.company_id, role: user.role, employeeId: user.employee_id, name: user.name },

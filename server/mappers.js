@@ -1,5 +1,7 @@
 // snake_case DB rows <-> camelCase API shapes matching src/lib/mockData.ts
 
+import { decryptField } from './crypto.js';
+
 export const toEmployeeDTO = (r) => ({
   id: r.id,
   name: r.name,
@@ -8,7 +10,7 @@ export const toEmployeeDTO = (r) => ({
   department: r.department,
   baseSalary: Number(r.base_salary),
   bankName: r.bank_name,
-  bankAccount: r.bank_account,
+  bankAccount: decryptField(r.bank_account),
   joinDate: r.join_date instanceof Date ? r.join_date.toISOString().slice(0, 10) : r.join_date,
   ptkpStatus: r.ptkp_status,
 });
@@ -42,7 +44,7 @@ export const toSlipDTO = (r) => ({
   month: r.month,
   baseSalary: Number(r.base_salary),
   bankName: r.bank_name,
-  bankAccount: r.bank_account,
+  bankAccount: decryptField(r.bank_account),
   allowances: r.allowances,
   deductions: r.deductions,
   overtimePay: Number(r.overtime_pay),

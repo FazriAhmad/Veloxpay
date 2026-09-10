@@ -2,7 +2,7 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { randomUUID } from 'crypto';
 import { pool } from '../db.js';
-import { requireAuth, requireRole } from '../auth.js';
+import { requireAuth, requireRole, isPasswordTooShort, MIN_PASSWORD_LENGTH } from '../auth.js';
 import { wrapAsync } from '../wrapAsync.js';
 
 export const usersRouter = Router();
@@ -13,6 +13,9 @@ usersRouter.post('/', requireRole('admin'), wrapAsync(async (req, res) => {
   const { employeeId, email, password } = req.body || {};
   if (!employeeId || !email || !password) {
     return res.status(400).json({ error: 'employeeId, email, dan password wajib diisi.' });
+  }
+  if (isPasswordTooShort(password)) {
+    return res.status(400).json({ error: `Password minimal ${MIN_PASSWORD_LENGTH} karakter.` });
   }
 
   const emp = await pool.query('SELECT * FROM employees WHERE id = $1 AND company_id = $2', [

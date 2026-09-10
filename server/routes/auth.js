@@ -2,7 +2,7 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { randomUUID } from 'crypto';
 import { pool } from '../db.js';
-import { signToken, requireAuth } from '../auth.js';
+import { signToken, requireAuth, isPasswordTooShort, MIN_PASSWORD_LENGTH } from '../auth.js';
 import { wrapAsync } from '../wrapAsync.js';
 
 export const authRouter = Router();
@@ -14,8 +14,8 @@ authRouter.post('/register', wrapAsync(async (req, res) => {
   if (!companyName || !name || !email || !password) {
     return res.status(400).json({ error: 'companyName, name, email, dan password wajib diisi.' });
   }
-  if (password.length < 8) {
-    return res.status(400).json({ error: 'Password minimal 8 karakter.' });
+  if (isPasswordTooShort(password)) {
+    return res.status(400).json({ error: `Password minimal ${MIN_PASSWORD_LENGTH} karakter.` });
   }
 
   const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email]);

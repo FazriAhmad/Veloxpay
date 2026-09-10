@@ -8,6 +8,7 @@ import { wrapAsync } from '../wrapAsync.js';
 import { calculatePph21Monthly, calculateBpjsEmployeeDeductions, isBelowMinimumWage } from '../payrollEngine.js';
 import { renderPayslipPdf } from '../pdf.js';
 import { sendPayslipEmail } from '../mailer.js';
+import { encryptField } from '../crypto.js';
 
 const formatIDR = (n) => `Rp ${Math.round(Number(n)).toLocaleString('id-ID')}`;
 
@@ -88,7 +89,7 @@ slipsRouter.post('/', requireRole('admin'), wrapAsync(async (req, res) => {
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'Draft')
      RETURNING ${SLIP_COLUMNS}`,
     [id, req.auth.companyId, employeeId, employeeName, employeeRole, employeeDepartment, month, baseSalary,
-     bankName, bankAccount, JSON.stringify(allowances), JSON.stringify(deductions), overtimePay, overtimeHours,
+     bankName, encryptField(bankAccount), JSON.stringify(allowances), JSON.stringify(deductions), overtimePay, overtimeHours,
      grossSalary, netSalary]
   );
   await writeAuditLog(

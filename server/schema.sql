@@ -104,6 +104,9 @@ CREATE TABLE IF NOT EXISTS notification_log (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Note: this table's immutability rules (below) mean the company_id CASCADE and
+-- user_id SET NULL actions here can never actually fire — harmless today since
+-- nothing deletes a company or a user, but revisit if that ever changes.
 CREATE TABLE IF NOT EXISTS audit_logs (
   id            TEXT PRIMARY KEY,
   company_id    TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
@@ -114,6 +117,17 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   details       TEXT NOT NULL,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Immutability enforced at the database level, not just by omitting UPDATE/DELETE
+-- routes — a rule here holds even against a future application bug or a direct
+-- psql session using the app's own role. Not applied to notification_log: its
+-- slip_id has an ON DELETE CASCADE from payroll_slips, and a blanket no-delete
+-- rule would silently swallow that cascade, leaving payroll_slips deletable while
+-- its notification rows stay orphaned instead of being cleaned up.
+DROP RULE IF EXISTS audit_logs_no_update ON audit_logs;
+DROP RULE IF EXISTS audit_logs_no_delete ON audit_logs;
+CREATE RULE audit_logs_no_update AS ON UPDATE TO audit_logs DO INSTEAD NOTHING;
+CREATE RULE audit_logs_no_delete AS ON DELETE TO audit_logs DO INSTEAD NOTHING;
 
 CREATE INDEX IF NOT EXISTS idx_employees_company ON employees(company_id);
 CREATE INDEX IF NOT EXISTS idx_slips_company ON payroll_slips(company_id);
