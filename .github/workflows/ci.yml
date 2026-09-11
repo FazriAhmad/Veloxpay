@@ -23,10 +23,13 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/veloxpay
-      JWT_SECRET: ci-test-secret-do-not-use-in-production
-      ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
-      NODE_ENV: test
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/veloxpay"
+      JWT_SECRET: "ci-test-secret-do-not-use-in-production"
+      # Quoted deliberately: an unquoted all-digit YAML scalar gets parsed as a
+      # number (this one collapsed to the integer 0), silently truncating a hex
+      # key to "0" and breaking the 64-char check in crypto.js.
+      ENCRYPTION_KEY: "af9bf869ab64781fdff58ce1b254f1e6c630393342230bd5e4fcd82258214c2a"
+      NODE_ENV: "test"
     defaults:
       run:
         working-directory: server
