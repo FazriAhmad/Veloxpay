@@ -65,7 +65,7 @@ server/
 
 - Backend: `cd server && npm test` — unit test mesin payroll/PDF/mailer/enkripsi (`node:test`) plus satu integration test (`test/integration.test.js`, pakai `supertest`) yang menjalankan alur penuh lewat HTTP: register → tambah karyawan → generate slip → approve → tandai dibayar → verifikasi RBAC 401/403. Butuh Postgres nyala.
 - Frontend: `npm test` — unit test (`vitest`) untuk util format, klien API, dan komponen `PayslipDocument`.
-- `.github/workflows/ci.yml` menjalankan keduanya otomatis di setiap push/PR ke `main`/`dev`, dengan Postgres sebagai service container untuk backend.
+- `.github/workflows/ci.yml` menjalankan keduanya otomatis di setiap push/PR ke `main`/`dev`, dengan Postgres sebagai service container untuk backend. Sudah diverifikasi hijau di GitHub Actions sungguhan (bukan cuma lolos di lokal) — percobaan pertama sempat merah gara-gara YAML meng-koersi `ENCRYPTION_KEY` 64-digit-nol tanpa kutip jadi angka `0`, sudah diperbaiki dengan tanda kutip eksplisit.
 
 ## Deployment
 
