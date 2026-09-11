@@ -33,7 +33,7 @@ cp .env.example .env   # isi DATABASE_URL, JWT_SECRET, ENCRYPTION_KEY sesuai env
 npm run migrate         # buat semua tabel
 npm run seed            # isi data contoh + akun login demo
 npm run dev             # jalan di http://localhost:4001
-npm test                # unit test mesin PPh 21/BPJS/THR, enkripsi, dsb (server/test/)
+npm test                # unit + integration test (server/test/) — perlu DB nyala
 ```
 
 `ENCRYPTION_KEY` wajib diisi (64 karakter hex) — generate dengan:
@@ -61,10 +61,33 @@ server/
                      # attendance, payroll_slips, audit_logs — semua multi-tenant per company_id)
 ```
 
+## Testing & CI
+
+- Backend: `cd server && npm test` — unit test mesin payroll/PDF/mailer/enkripsi (`node:test`) plus satu integration test (`test/integration.test.js`, pakai `supertest`) yang menjalankan alur penuh lewat HTTP: register → tambah karyawan → generate slip → approve → tandai dibayar → verifikasi RBAC 401/403. Butuh Postgres nyala.
+- Frontend: `npm test` — unit test (`vitest`) untuk util format, klien API, dan komponen `PayslipDocument`.
+- `.github/workflows/ci.yml` menjalankan keduanya otomatis di setiap push/PR ke `main`/`dev`, dengan Postgres sebagai service container untuk backend.
+
+## Deployment
+
+Belum di-deploy ke mana pun — berikut yang sudah disiapkan agar deployment tinggal eksekusi:
+
+- `Dockerfile` (frontend, build statis lalu disajikan nginx) dan `server/Dockerfile` (backend Node) sudah ada. Build manual:
+  ```bash
+  docker build -t veloxpay-web .
+  docker build -t veloxpay-api ./server
+  ```
+- Untuk produksi sungguhan, siapkan sendiri (butuh akun — di luar yang bisa dilakukan asisten ini):
+  - Database Postgres terkelola (mis. Railway, Supabase, RDS).
+  - Set `NODE_ENV=production`, `ALLOWED_ORIGINS` ke domain frontend, `SMTP_HOST` dkk untuk email nyata, dan **simpan `ENCRYPTION_KEY` dengan aman** — kunci yang hilang membuat data rekening bank terenkripsi tak bisa dipulihkan.
+  - Reverse proxy/hosting dengan TLS (redirect HTTPS otomatis sudah ada di kode saat `NODE_ENV=production`, tinggal pasang sertifikatnya).
+- Monitoring/error tracking: baru ada logging request dasar (`morgan`, aktif otomatis saat server jalan). Belum ada APM/error tracker (mis. Sentry) — itu juga perlu akun pihak ketiga.
+
 ## Status saat ini
 
-Fase 0–4 selesai. Frontend dan backend tersambung penuh dengan login sungguhan dan RBAC di server (Fase 1). PPh 21, BPJS Kesehatan/JHT/JP, estimasi THR, dan peringatan upah minimum dihitung otomatis di `server/payrollEngine.js` setiap slip diterbitkan (Fase 2). Slip gaji PDF dibuat sungguhan di server (`server/pdf.js`), dan menandai slip "Sudah Dibayar" memicu email asli via SMTP — atau tercatat jujur "dilewati" bila SMTP belum dikonfigurasi (Fase 3). Nomor rekening bank terenkripsi (AES-256-GCM) di database, audit log punya aturan level-database yang menolak diubah/dihapus, rate limiting di endpoint login, dan header keamanan standar via helmet (Fase 4). Lihat `server/test/` untuk unit test-nya.
+Fase 0–5 selesai. Frontend dan backend tersambung penuh dengan login sungguhan dan RBAC di server (Fase 1). PPh 21, BPJS Kesehatan/JHT/JP, estimasi THR, dan peringatan upah minimum dihitung otomatis di `server/payrollEngine.js` setiap slip diterbitkan (Fase 2). Slip gaji PDF dibuat sungguhan di server (`server/pdf.js`), dan menandai slip "Sudah Dibayar" memicu email asli via SMTP — atau tercatat jujur "dilewati" bila SMTP belum dikonfigurasi (Fase 3). Nomor rekening bank terenkripsi (AES-256-GCM) di database, audit log punya aturan level-database yang menolak diubah/dihapus, rate limiting di endpoint login, dan header keamanan standar via helmet (Fase 4). Lihat `server/test/` untuk unit test-nya.
 
 **Penting:** perhitungan PPh 21 memakai pendekatan progresif disetahunkan, bukan tabel TER resmi DJP (PMK 168/2023) — cukup akurat untuk estimasi, tapi perlu divalidasi/diganti sebelum dipakai pelaporan pajak sungguhan. Upah minimum juga masih satu angka nasional, bukan data UMR/UMK per daerah. Email hanya benar-benar terkirim setelah `SMTP_HOST` dkk diisi di `server/.env`. Setelah mengisi `ENCRYPTION_KEY` baru, jalankan `node migrateEncryptBankAccounts.js` sekali untuk mengenkripsi data lama.
 
-Belum ada: test otomatis untuk frontend, CI/CD, deployment (Fase 5). Penjadwalan otomatis (cron) di modul V3 masih konfigurasi lokal, belum benar-benar dieksekusi terjadwal. Lihat PRD di atas untuk detail tiap fase.
+Fase 5 menambahkan integration test end-to-end, unit test frontend, CI otomatis di GitHub Actions, dan Dockerfile untuk kedua sisi — lihat bagian Testing & CI dan Deployment di atas untuk detail, termasuk apa yang masih perlu dilakukan manual (hosting, SMTP, error tracking — semua butuh akun pihak ketiga yang tak bisa dibuatkan otomatis).
+
+Yang belum: penjadwalan otomatis (cron) di modul V3 masih konfigurasi lokal, belum benar-benar dieksekusi terjadwal — masuk backlog. Lihat PRD di atas untuk detail tiap fase.
