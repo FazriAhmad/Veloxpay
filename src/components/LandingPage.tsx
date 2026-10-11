@@ -2,10 +2,10 @@ import React from 'react';
 import { motion } from 'framer-motion';
 
 interface LandingPageProps {
-  onEnterApp: (role: 'admin' | 'employee') => void;
+  onGoToLogin: () => void;
 }
 
-export const LandingPage: React.FC<LandingPageProps> = ({ onEnterApp }) => {
+export const LandingPage: React.FC<LandingPageProps> = ({ onGoToLogin }) => {
   return (
     <div className="min-h-screen bg-slate-50 relative overflow-hidden flex flex-col">
       {/* Background Decorative Gradients */}
@@ -26,13 +26,13 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnterApp }) => {
 
         <div className="flex items-center gap-4">
           <button
-            onClick={() => onEnterApp('employee')}
+            onClick={onGoToLogin}
             className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors"
           >
             Portal Karyawan
           </button>
           <button
-            onClick={() => onEnterApp('admin')}
+            onClick={onGoToLogin}
             className="px-5 py-2.5 text-sm font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-xl shadow-md hover:shadow-lg transition-all"
           >
             Portal HR / Admin
@@ -69,13 +69,13 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnterApp }) => {
             className="mt-10 flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-4"
           >
             <button
-              onClick={() => onEnterApp('admin')}
+              onClick={onGoToLogin}
               className="w-full sm:w-auto px-8 py-4 text-base font-semibold text-white bg-gradient-to-r from-primary-600 to-primary-700 hover:from-primary-700 hover:to-primary-800 rounded-2xl shadow-xl shadow-primary-500/20 hover:shadow-2xl hover:shadow-primary-500/30 transition-all flex items-center justify-center gap-2 group cursor-pointer"
             >
               Mulai Demo Admin <i className="fi fi-rr-arrow-right transition-transform group-hover:translate-x-1" />
             </button>
             <button
-              onClick={() => onEnterApp('employee')}
+              onClick={onGoToLogin}
               className="w-full sm:w-auto px-8 py-4 text-base font-semibold text-slate-700 bg-white hover:bg-slate-50 rounded-2xl border border-slate-200 shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
             >
               <i className="fi fi-rr-user" /> Portal Karyawan

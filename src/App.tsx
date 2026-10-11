@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { visibleItems, resolveSubTab, ModuleId } from './lib/navigation';
+import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Employee,
@@ -7,300 +8,261 @@ import {
   PayrollSlip,
   AuditLog,
   ScheduledConfig,
-  SimulatedEmail,
-  INITIAL_EMPLOYEES,
-  INITIAL_ATTENDANCE,
-  INITIAL_COMPONENTS,
-  INITIAL_SLIPS,
-  INITIAL_AUDIT_LOGS,
+  NotificationLogEntry,
   INITIAL_SCHEDULED_CONFIG,
-  INITIAL_EMAILS
 } from './lib/mockData';
+import { api, setToken, getToken, AuthUser } from './lib/api';
+import { saveBlob } from './lib/download';
 import { LandingPage } from './components/LandingPage';
+import { LoginPage } from './components/LoginPage';
 import { V1_Payslip } from './components/V1_Payslip';
 import { V2_Management } from './components/V2_Management';
 import { V3_Automation } from './components/V3_Automation';
 import { ToastContainer, ToastMessage } from './components/Toast';
+import { PayslipDocument } from './components/PayslipDocument';
+
+const ROLE_LABEL = { admin: 'Administrator', finance: 'Keuangan', approver: 'Penyetuju', employee: 'Karyawan' } as const;
+
+const MODULE_TITLE: Record<ModuleId, string> = {
+  v1: 'Fase V1: Digital Payslip',
+  v2: 'Fase V2: Payroll Management',
+  v3: 'Fase V3: Automated Payroll',
+};
+const MODULE_ACTIVE: Record<ModuleId, string> = {
+  v1: 'bg-primary-600 text-white shadow-md shadow-primary-500/10',
+  v2: 'bg-secondary-600 text-white shadow-md',
+  v3: 'bg-purple-600 text-white shadow-md',
+};
 
 function App() {
   // --- APPLICATION STATE ---
-  const [currentView, setCurrentView] = useState<'landing' | 'dashboard'>('landing');
+  const [currentView, setCurrentView] = useState<'landing' | 'login' | 'dashboard'>('landing');
   const [activeTab, setActiveTab] = useState<'v1' | 'v2' | 'v3'>('v1');
-  const [activeRole, setActiveRole] = useState<'admin' | 'employee'>('admin');
-  const [currentEmployeeId, setCurrentEmployeeId] = useState<string>('EMP-001');
+  const [subTabs, setSubTabs] = useState<Partial<Record<ModuleId, string>>>({});
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [isBooting, setIsBooting] = useState(!!getToken());
 
-  // --- CORE DATA STATE ---
-  const [employees, setEmployees] = useState<Employee[]>(() => {
-    const saved = localStorage.getItem('velox_employees');
-    return saved ? JSON.parse(saved) : INITIAL_EMPLOYEES;
-  });
+  // --- CORE DATA STATE (server-backed) ---
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [attendance, setAttendance] = useState<Attendance[]>([]);
+  const [components, setComponents] = useState<SalaryComponent[]>([]);
+  const [slips, setSlips] = useState<PayrollSlip[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [notifications, setNotifications] = useState<NotificationLogEntry[]>([]);
 
-  const [attendance, setAttendance] = useState<Attendance[]>(() => {
-    const saved = localStorage.getItem('velox_attendance');
-    return saved ? JSON.parse(saved) : INITIAL_ATTENDANCE;
-  });
-
-  const [components, setComponents] = useState<SalaryComponent[]>(() => {
-    const saved = localStorage.getItem('velox_components');
-    return saved ? JSON.parse(saved) : INITIAL_COMPONENTS;
-  });
-
-  const [slips, setSlips] = useState<PayrollSlip[]>(() => {
-    const saved = localStorage.getItem('velox_slips');
-    return saved ? JSON.parse(saved) : INITIAL_SLIPS;
-  });
-
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => {
-    const saved = localStorage.getItem('velox_audit_logs');
-    return saved ? JSON.parse(saved) : INITIAL_AUDIT_LOGS;
-  });
-
+  // Real cron-based scheduling is a Phase 6 backlog item — this toggle is still a
+  // local mock; it doesn't cause anything to actually run on a schedule yet.
   const [scheduledConfig, setScheduledConfig] = useState<ScheduledConfig>(() => {
     const saved = localStorage.getItem('velox_scheduled_config');
     return saved ? JSON.parse(saved) : INITIAL_SCHEDULED_CONFIG;
   });
 
-  const [simulatedEmails, setSimulatedEmails] = useState<SimulatedEmail[]>(() => {
-    const saved = localStorage.getItem('velox_emails');
-    return saved ? JSON.parse(saved) : INITIAL_EMAILS;
-  });
+  useEffect(() => {
+    localStorage.setItem('velox_scheduled_config', JSON.stringify(scheduledConfig));
+  }, [scheduledConfig]);
 
   // --- TOAST NOTIFICATIONS ---
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
-  const addToast = (title: string, message: string, type: 'success' | 'error' | 'info' | 'warning' = 'info') => {
-    const id = Math.random().toString(36).substring(2, 9);
-    setToasts((prev) => [...prev, { id, title, message, type }]);
-  };
+  const addToast = useCallback(
+    (title: string, message: string, type: 'success' | 'error' | 'info' | 'warning' = 'info') => {
+      const id = Math.random().toString(36).substring(2, 9);
+      setToasts((prev) => [...prev, { id, title, message, type }]);
+    },
+    []
+  );
 
   const removeToast = (id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // --- PERSISTENCE TO LOCAL STORAGE ---
+  // --- DATA LOADING ---
+  // Refetches everything the signed-in user is allowed to see. Called after every
+  // mutation so the UI always reflects what the server actually stored.
+  const loadData = useCallback(async (role: AuthUser['role']) => {
+    const [emps, atts, comps, slps, logs, notifs] = await Promise.all([
+      api.listEmployees(),
+      api.listAttendance(),
+      api.listComponents(),
+      api.listSlips(),
+      role === 'admin' ? api.listAuditLogs() : Promise.resolve([] as AuditLog[]),
+      api.listNotifications(),
+    ]);
+    setEmployees(emps);
+    setAttendance(atts);
+    setComponents(comps);
+    setSlips(slps);
+    setAuditLogs(logs);
+    setNotifications(notifs);
+  }, []);
+
+  // Restore an existing session on refresh instead of dumping the user back to the landing page.
   useEffect(() => {
-    localStorage.setItem('velox_employees', JSON.stringify(employees));
-  }, [employees]);
+    if (!getToken()) return;
 
-  useEffect(() => {
-    localStorage.setItem('velox_attendance', JSON.stringify(attendance));
-  }, [attendance]);
-
-  useEffect(() => {
-    localStorage.setItem('velox_components', JSON.stringify(components));
-  }, [components]);
-
-  useEffect(() => {
-    localStorage.setItem('velox_slips', JSON.stringify(slips));
-  }, [slips]);
-
-  useEffect(() => {
-    localStorage.setItem('velox_audit_logs', JSON.stringify(auditLogs));
-  }, [auditLogs]);
-
-  useEffect(() => {
-    localStorage.setItem('velox_scheduled_config', JSON.stringify(scheduledConfig));
-  }, [scheduledConfig]);
-
-  useEffect(() => {
-    localStorage.setItem('velox_emails', JSON.stringify(simulatedEmails));
-  }, [simulatedEmails]);
-
-  // --- AUDIT LOG HELPER ---
-  const createAuditLog = (action: string, details: string) => {
-    const newLog: AuditLog = {
-      id: `LOG-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
-      timestamp: new Date().toISOString(),
-      user: activeRole === 'admin' ? 'Dewi Lestari' : 'Ahmad Subarjo',
-      role: activeRole === 'admin' ? 'Finance Lead' : 'Senior Software Engineer',
-      action,
-      details,
-      ipAddress: '192.168.1.' + Math.floor(Math.random() * 254 + 1),
-    };
-    setAuditLogs((prev) => [newLog, ...prev]);
-  };
-
-  // --- HANDLERS ---
-
-  // V1: Add Employee
-  const handleAddEmployee = (emp: Omit<Employee, 'id' | 'joinDate'>) => {
-    const newId = `EMP-0${employees.length + 1}`;
-    const newEmp: Employee = {
-      ...emp,
-      id: newId,
-      joinDate: '2026-09-07', // today's date in context
-    };
-    setEmployees((prev) => [...prev, newEmp]);
-    
-    // Auto-create blank attendance for Sept 2026
-    const newAtt: Attendance = {
-      employeeId: newId,
-      month: '2026-09',
-      present: 22,
-      sick: 0,
-      leave: 0,
-      alpha: 0,
-      overtimeHours: 0,
-    };
-    setAttendance((prev) => [...prev, newAtt]);
-
-    createAuditLog('ADD_EMPLOYEE', `Mendaftarkan karyawan baru ${emp.name} dengan ID ${newId}`);
-  };
-
-  // V1: Edit Employee
-  const handleEditEmployee = (emp: Employee) => {
-    setEmployees((prev) => prev.map((e) => (e.id === emp.id ? emp : e)));
-    createAuditLog('EDIT_EMPLOYEE', `Memperbarui data profil karyawan ${emp.name} (${emp.id})`);
-  };
-
-  // V1: Delete Employee
-  const handleDeleteEmployee = (id: string) => {
-    const emp = employees.find((e) => e.id === id);
-    setEmployees((prev) => prev.filter((e) => e.id !== id));
-    createAuditLog('DELETE_EMPLOYEE', `Menghapus karyawan ${emp?.name || id} dari sistem.`);
-  };
-
-  // V1: Generate Slip
-  const handleGenerateSlip = (slip: Omit<PayrollSlip, 'id' | 'generatedAt'>) => {
-    const newId = `PAY-202609-0${slips.length + 1}`;
-    const newSlip: PayrollSlip = {
-      ...slip,
-      id: newId,
-      generatedAt: new Date().toISOString(),
-    };
-    setSlips((prev) => [newSlip, ...prev]);
-    createAuditLog('GENERATE_PAYROLL', `Membuat draf slip gaji untuk ${slip.employeeName} periode ${slip.month}`);
-  };
-
-  // V1: Delete Slip
-  const handleDeleteSlip = (id: string) => {
-    setSlips((prev) => prev.filter((s) => s.id !== id));
-    createAuditLog('DELETE_PAYROLL', `Menghapus slip gaji ${id} dari riwayat.`);
-  };
-
-  // V2: Update Attendance
-  const handleUpdateAttendance = (att: Attendance) => {
-    setAttendance((prev) => {
-      const idx = prev.findIndex((a) => a.employeeId === att.employeeId && a.month === att.month);
-      if (idx > -1) {
-        return prev.map((a, i) => (i === idx ? att : a));
-      } else {
-        return [...prev, att];
+    (async () => {
+      try {
+        const me = await api.me();
+        setUser(me);
+        await loadData(me.role);
+        setCurrentView('dashboard');
+      } catch {
+        setToken(null);
+      } finally {
+        setIsBooting(false);
       }
-    });
-    const emp = employees.find((e) => e.id === att.employeeId);
-    createAuditLog('UPDATE_ATTENDANCE', `Memperbarui data kehadiran bulanan ${emp?.name || att.employeeId} periode ${att.month}`);
-  };
+    })();
+  }, [loadData]);
 
-  // V2: Add Salary Component
-  const handleAddComponent = (comp: Omit<SalaryComponent, 'id' | 'isEditable'>) => {
-    const newId = `COMP-0${components.length + 1}`;
-    const newComp: SalaryComponent = {
-      ...comp,
-      id: newId,
-      isEditable: true,
-    };
-    setComponents((prev) => [...prev, newComp]);
-    createAuditLog('ADD_COMPONENT', `Menambahkan komponen gaji baru "${comp.name}" (${comp.type})`);
-  };
-
-  // V2: Update Salary Component
-  const handleUpdateComponent = (comp: SalaryComponent) => {
-    setComponents((prev) => prev.map((c) => (c.id === comp.id ? comp : c)));
-    createAuditLog('UPDATE_COMPONENT', `Memperbarui detail komponen gaji "${comp.name}"`);
-  };
-
-  // V2: Delete Salary Component
-  const handleDeleteComponent = (id: string) => {
-    const comp = components.find((c) => c.id === id);
-    setComponents((prev) => prev.filter((c) => c.id !== id));
-    createAuditLog('DELETE_COMPONENT', `Menghapus komponen gaji "${comp?.name || id}"`);
-  };
-
-  // V2: Update Slip Status (Approval Workflow)
-  const handleUpdateSlipStatus = (id: string, status: PayrollSlip['status'], approvedBy?: string) => {
-    setSlips((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, status, approvedBy: approvedBy || s.approvedBy } : s))
-    );
-    const slip = slips.find((s) => s.id === id);
-    createAuditLog(
-      status === 'Approved' ? 'APPROVE_PAYROLL' : 'REJECT_PAYROLL',
-      `Merubah status persetujuan slip ${id} (${slip?.employeeName}) menjadi ${status}`
-    );
-  };
-
-  // V3: Update Scheduled Config
-  const handleUpdateScheduledConfig = (config: ScheduledConfig) => {
-    setScheduledConfig(config);
-    createAuditLog('UPDATE_SCHEDULE', `Memperbarui penjadwalan otomatis payroll: ${config.isEnabled ? 'AKTIF' : 'NONAKTIF'}, Tanggal ${config.dayOfMonth}`);
-  };
-
-  // V3: Mass Disbursement
-  const handleDisbursePayroll = () => {
-    const dateStr = '2026-09-07'; // current date in context
-    const approved = slips.filter((s) => s.status === 'Approved');
-
-    if (approved.length === 0) return;
-
-    // Update statuses
-    setSlips((prev) =>
-      prev.map((s) => (s.status === 'Approved' ? { ...s, status: 'Paid', paymentDate: dateStr } : s))
-    );
-
-    // Create Simulated Emails for each employee
-    const newEmails: SimulatedEmail[] = approved.map((s) => {
-      const emp = employees.find((e) => e.id === s.employeeId);
-      const emailTo = emp?.email || `${s.employeeName.toLowerCase().replace(/\s+/g, '')}@veloxpay.co.id`;
-      
-      return {
-        id: `EM-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
-        to: emailTo,
-        subject: `Slip Gaji Digital VeloxPay - September 2026`,
-        body: `Halo ${s.employeeName},\n\nSlip gaji Anda untuk periode September 2026 telah terbit. Dana sebesar ${new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(s.netSalary)} telah sukses ditransfer ke rekening ${s.bankName} Anda.\n\nSilakan login ke portal VeloxPay Anda untuk mengunduh dokumen PDF lengkap.\n\nTerima kasih,\nVeloxPay Automated Billing`,
-        sentAt: new Date().toISOString(),
-        isRead: false,
-        pdfId: s.id,
-      };
-    });
-
-    setSimulatedEmails((prev) => [...newEmails, ...prev]);
-
-    // Audit logs
-    createAuditLog('DISBURSE_PAYMENT', `Mengeksekusi transfer massal sukses untuk ${approved.length} rekening karyawan via VeloxTransfer.`);
-    createAuditLog('SEND_EMAIL_PAYSLIP', `Mengirimkan ${approved.length} notifikasi slip gaji otomatis ke email karyawan.`);
-  };
-
-  // V3: Read Email
-  const handleReadEmail = (id: string) => {
-    setSimulatedEmails((prev) =>
-      prev.map((e) => (e.id === id ? { ...e, isRead: true } : e))
-    );
-  };
-
-  // Navigation and view handlers
-  const handleEnterApp = (role: 'admin' | 'employee') => {
-    setActiveRole(role);
-    setCurrentView('dashboard');
-    if (role === 'employee') {
-      setCurrentEmployeeId('EMP-001'); // Ahmad Subarjo default
+  // Wraps a mutation so a failed API call always surfaces instead of silently doing nothing.
+  const runAction = async (action: () => Promise<void>, errorTitle: string) => {
+    if (!user) return;
+    try {
+      await action();
+      await loadData(user.role);
+    } catch (err) {
+      addToast(errorTitle, err instanceof Error ? err.message : 'Terjadi kesalahan.', 'error');
     }
+  };
+
+  // --- AUTH HANDLERS ---
+  const handleLogin = async (email: string, password: string) => {
+    const { token, user: loggedIn } = await api.login(email, password);
+    setToken(token);
+    setUser(loggedIn);
+    await loadData(loggedIn.role);
+    setActiveTab('v1');
+    setSubTabs({});
+    setCurrentView('dashboard');
     addToast(
-      'Koneksi Berhasil',
-      `Masuk sebagai portal ${role === 'admin' ? 'Administrator (Dewi Lestari)' : 'Karyawan (Ahmad Subarjo)'}`,
+      'Berhasil Masuk',
+      `Selamat datang, ${loggedIn.name} (${ROLE_LABEL[loggedIn.role]})`,
       'success'
     );
   };
 
-  const handleRoleSwitch = (role: 'admin' | 'employee') => {
-    setActiveRole(role);
-    if (role === 'employee') {
-      setCurrentEmployeeId('EMP-001');
+  const handleLogout = () => {
+    setToken(null);
+    setUser(null);
+    setEmployees([]);
+    setAttendance([]);
+    setComponents([]);
+    setSlips([]);
+    setAuditLogs([]);
+    setNotifications([]);
+    setCurrentView('landing');
+    addToast('Keluar', 'Sesi Anda telah diakhiri.', 'info');
+  };
+
+  // --- DATA HANDLERS ---
+  const handleAddEmployee = (emp: Omit<Employee, 'id' | 'joinDate'>, loginPassword?: string) =>
+    runAction(async () => {
+      const result = await api.createEmployee(emp);
+      result.warnings?.forEach((w) => addToast('Perhatian', w, 'warning'));
+      if (loginPassword) {
+        try {
+          await api.createEmployeeLogin(result.id, emp.email, loginPassword);
+          addToast('Login Dibuat', `${emp.name} dapat masuk dengan ${emp.email}.`, 'success');
+        } catch (err) {
+          // The employee exists already; say so rather than reporting the whole add as failed.
+          addToast('Karyawan Tersimpan, Login Gagal', err instanceof Error ? err.message : 'Terjadi kesalahan.', 'error');
+        }
+      }
+    }, 'Gagal Menambah Karyawan');
+
+  const handleCreateLogin = (emp: Employee, password: string) =>
+    runAction(async () => {
+      await api.createEmployeeLogin(emp.id, emp.email, password);
+      addToast('Login Dibuat', `${emp.name} dapat masuk dengan ${emp.email}.`, 'success');
+    }, 'Gagal Membuat Login');
+
+  const handleEditEmployee = (emp: Employee) =>
+    runAction(async () => {
+      await api.updateEmployee(emp);
+    }, 'Gagal Memperbarui Karyawan');
+
+  const handleDeleteEmployee = (id: string) =>
+    runAction(async () => {
+      await api.deleteEmployee(id);
+    }, 'Gagal Menghapus Karyawan');
+
+  const handleGenerateSlip = (slip: Omit<PayrollSlip, 'id' | 'generatedAt'>) =>
+    runAction(async () => {
+      const result = await api.createSlip(slip);
+      result.warnings?.forEach((w) => addToast('Perhatian', w, 'warning'));
+    }, 'Gagal Membuat Slip');
+
+  const handleDeleteSlip = (id: string) =>
+    runAction(async () => {
+      await api.deleteSlip(id);
+    }, 'Gagal Menghapus Slip');
+
+  const handleUpdateAttendance = (att: Attendance) =>
+    runAction(async () => {
+      await api.saveAttendance(att);
+    }, 'Gagal Memperbarui Kehadiran');
+
+  const handleAddComponent = (comp: Omit<SalaryComponent, 'id' | 'isEditable'>) =>
+    runAction(async () => {
+      await api.createComponent(comp);
+    }, 'Gagal Menambah Komponen');
+
+  const handleUpdateComponent = (comp: SalaryComponent) =>
+    runAction(async () => {
+      await api.updateComponent(comp);
+    }, 'Gagal Memperbarui Komponen');
+
+  const handleDeleteComponent = (id: string) =>
+    runAction(async () => {
+      await api.deleteComponent(id);
+    }, 'Gagal Menghapus Komponen');
+
+  const handleUpdateSlipStatus = (id: string, status: PayrollSlip['status']) =>
+    runAction(async () => {
+      await api.updateSlipStatus(id, status);
+    }, 'Gagal Memperbarui Status Slip');
+
+  const handleUpdateScheduledConfig = (config: ScheduledConfig) => {
+    setScheduledConfig(config);
+  };
+
+  // Marks every approved slip as paid. VeloxPay never moves money — this records the
+  // admin's confirmation that payment already happened through the company's bank.
+  // The server sends the real payslip email (or honestly logs why it couldn't) as
+  // part of the same status-update call — see PATCH /slips/:id/status.
+  // references: slip id -> transfer reference typed for that slip (may be missing or empty).
+  const handleMarkAllPaid = (references: Record<string, string>) =>
+    runAction(async () => {
+      const approved = slips.filter((s) => s.status === 'Approved');
+      if (approved.length === 0) return;
+      await Promise.all(approved.map((s) => api.updateSlipStatus(s.id, 'Paid', references[s.id]?.trim() || undefined)));
+    }, 'Gagal Menandai Slip Dibayar');
+
+  const handleConfirmReceipt = (slip: PayrollSlip) =>
+    runAction(async () => {
+      await api.confirmReceipt(slip.id);
+      addToast('Terima Kasih', 'Penerimaan gaji Anda sudah dikonfirmasi.', 'success');
+    }, 'Gagal Mengonfirmasi');
+
+  const handleDisputeReceipt = (slip: PayrollSlip, note: string) =>
+    runAction(async () => {
+      await api.disputeReceipt(slip.id, note);
+      addToast('Laporan Terkirim', 'Petugas akan memeriksa pembayaran Anda.', 'info');
+    }, 'Gagal Melaporkan');
+
+  const handleResolveDispute = (slip: PayrollSlip, note: string, reference?: string) =>
+    runAction(async () => {
+      await api.resolveDispute(slip.id, note, reference);
+      addToast('Tanggapan Terkirim', 'Karyawan diminta mengonfirmasi lagi.', 'success');
+    }, 'Gagal Menanggapi');
+
+  const handleDownloadSlipPdf = async (slip: PayrollSlip) => {
+    try {
+      const blob = await api.downloadSlipPdf(slip.id);
+      saveBlob(blob, `${slip.id}.pdf`);
+    } catch (err) {
+      addToast('Gagal Mengunduh PDF', err instanceof Error ? err.message : 'Terjadi kesalahan.', 'error');
     }
-    addToast(
-      'Beralih Peran',
-      `Sekarang Anda berada di Portal ${role === 'admin' ? 'Administrator' : 'Karyawan'}`,
-      'info'
-    );
   };
 
   // Quick action: view slip from email link
@@ -309,15 +271,49 @@ function App() {
     setViewingSlip(slip);
   };
 
+  if (isBooting) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="flex items-center gap-3 text-sm font-semibold text-slate-500">
+          <i className="fi fi-rr-spinner animate-spin text-primary-600" />
+          Memulihkan sesi...
+        </div>
+      </div>
+    );
+  }
+
+  const userRole = user?.role ?? 'employee';
+  // finance / approver / admin all get the staff screens; what each may do is gated per button
+  // (and, authoritatively, by the server).
+  const activeRole = userRole === 'employee' ? 'employee' : 'admin';
+  const initials = (user?.name || '??')
+    .split(' ')
+    .map((w) => w[0])
+    .slice(0, 2)
+    .join('')
+    .toUpperCase();
+
+  const navBadge = (mod: ModuleId, id: string) => {
+    if (mod === 'v2' && id === 'approval') return slips.filter((x) => x.status === 'Draft' || x.status === 'Pending Approval').length;
+    // staff: payments the employee says never arrived; employee: payments waiting for their answer
+    if (mod === 'v3' && id === 'payment-status') return slips.filter((x) => x.receiptStatus === 'Disputed').length;
+    if (mod === 'v1' && id === 'history' && userRole === 'employee') return slips.filter((x) => x.status === 'Paid' && x.receiptStatus === 'Awaiting').length;
+    if (mod === 'v3' && id === 'emails') return notifications.filter((n) => n.status === 'failed').length;
+    return 0;
+  };
+  const subTabOf = (mod: ModuleId) => resolveSubTab(mod, userRole, subTabs[mod]);
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans selection:bg-primary-100 selection:text-primary-900">
       <ToastContainer toasts={toasts} removeToast={removeToast} />
 
       {currentView === 'landing' ? (
-        <LandingPage onEnterApp={handleEnterApp} />
+        <LandingPage onGoToLogin={() => setCurrentView('login')} />
+      ) : currentView === 'login' ? (
+        <LoginPage onLogin={handleLogin} onBack={() => setCurrentView('landing')} />
       ) : (
         <div className="flex-1 flex flex-col lg:flex-row min-h-screen">
-          
+
           {/* SIDEBAR NAVIGATION (NO-PRINT) */}
           <aside className="w-full lg:w-64 bg-slate-900 text-slate-400 p-6 flex flex-col justify-between shrink-0 border-r border-slate-800 no-print">
             <div className="space-y-8">
@@ -333,10 +329,7 @@ function App() {
                   </div>
                 </div>
                 <button
-                  onClick={() => {
-                    setCurrentView('landing');
-                    addToast('Keluar', 'Anda kembali ke halaman depan.', 'info');
-                  }}
+                  onClick={handleLogout}
                   className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-500 hover:text-white transition-colors lg:hidden"
                 >
                   <i className="fi fi-rr-exit text-xs" />
@@ -345,62 +338,35 @@ function App() {
 
               {/* Sidebar Menu */}
               <nav className="space-y-6">
-                {/* V1 Menu */}
-                <div className="space-y-2">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block px-3">Fase V1: Digital Payslip</span>
-                  <button
-                    onClick={() => {
-                      setActiveTab('v1');
-                      addToast('Menu V1', 'Membuka modul Digital Payslip.', 'info');
-                    }}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                      activeTab === 'v1'
-                        ? 'bg-primary-600 text-white shadow-md shadow-primary-500/10'
-                        : 'hover:bg-slate-800 hover:text-slate-200'
-                    }`}
-                  >
-                    <i className="fi fi-rr-document-signed text-sm" />
-                    <span>Digital Payslip Portal</span>
-                  </button>
-                </div>
-
-                {/* V2 Menu */}
-                <div className="space-y-2">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block px-3">Fase V2: Payroll Management</span>
-                  <button
-                    onClick={() => {
-                      setActiveTab('v2');
-                      addToast('Menu V2', 'Membuka modul Payroll Management.', 'info');
-                    }}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                      activeTab === 'v2'
-                        ? 'bg-secondary-600 text-white shadow-md'
-                        : 'hover:bg-slate-800 hover:text-slate-200'
-                    }`}
-                  >
-                    <i className="fi fi-rr-chart-pie-alt text-sm" />
-                    <span>Payroll Management</span>
-                  </button>
-                </div>
-
-                {/* V3 Menu */}
-                <div className="space-y-2">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block px-3">Fase V3: Automated Payroll</span>
-                  <button
-                    onClick={() => {
-                      setActiveTab('v3');
-                      addToast('Menu V3', 'Membuka modul Automated Payroll.', 'info');
-                    }}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                      activeTab === 'v3'
-                        ? 'bg-purple-600 text-white shadow-md'
-                        : 'hover:bg-slate-800 hover:text-slate-200'
-                    }`}
-                  >
-                    <i className="fi fi-rr-settings-sliders text-sm" />
-                    <span>Automated Payroll</span>
-                  </button>
-                </div>
+                {(['v1', 'v2', 'v3'] as const).map((mod) => (
+                  <div key={mod} className="space-y-1">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block px-3 pb-1">
+                      {MODULE_TITLE[mod]}
+                    </span>
+                    {visibleItems(mod, userRole).map((item) => {
+                      const active = activeTab === mod && resolveSubTab(mod, userRole, subTabs[mod]) === item.id;
+                      const badge = navBadge(mod, item.id);
+                      return (
+                        <button
+                          key={item.id}
+                          onClick={() => {
+                            setActiveTab(mod);
+                            setSubTabs((prev) => ({ ...prev, [mod]: item.id }));
+                          }}
+                          className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                            active ? MODULE_ACTIVE[mod] : 'hover:bg-slate-800 hover:text-slate-200'
+                          }`}
+                        >
+                          <i className={`fi ${item.icon} text-sm`} />
+                          <span className="flex-1 text-left">{item.label}</span>
+                          {badge > 0 && (
+                            <span className="px-1.5 py-0.5 text-[10px] font-bold text-white bg-rose-500 rounded-full">{badge}</span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))}
               </nav>
             </div>
 
@@ -408,23 +374,18 @@ function App() {
             <div className="space-y-4 pt-6 border-t border-slate-800">
               <div className="flex items-center gap-3 px-2">
                 <div className="w-8 h-8 rounded-lg bg-slate-800 flex items-center justify-center text-slate-400 font-bold text-xs">
-                  {activeRole === 'admin' ? 'DL' : 'AS'}
+                  {initials}
                 </div>
                 <div>
-                  <span className="font-bold text-xs text-white block leading-none">
-                    {activeRole === 'admin' ? 'Dewi Lestari' : 'Ahmad Subarjo'}
-                  </span>
+                  <span className="font-bold text-xs text-white block leading-none">{user?.name}</span>
                   <span className="text-[10px] text-slate-500 block mt-1">
-                    {activeRole === 'admin' ? 'Admin / HR Manager' : 'Senior Engineer'}
+                    {userRole === 'admin' ? 'Admin / HR Manager' : ROLE_LABEL[userRole]}
                   </span>
                 </div>
               </div>
 
               <button
-                onClick={() => {
-                  setCurrentView('landing');
-                  addToast('Keluar', 'Kembali ke halaman depan.', 'info');
-                }}
+                onClick={handleLogout}
                 className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-slate-800 hover:bg-rose-950 hover:text-rose-400 text-xs font-semibold text-slate-400 transition-colors cursor-pointer"
               >
                 <i className="fi fi-rr-exit" /> Keluar Console
@@ -434,7 +395,7 @@ function App() {
 
           {/* MAIN CONTENT AREA */}
           <div className="flex-1 flex flex-col min-w-0">
-            
+
             {/* HEADER (NO-PRINT) */}
             <header className="bg-white border-b border-slate-100 px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-4 no-print">
               {/* Left header: breadcrumbs */}
@@ -446,50 +407,41 @@ function App() {
                 </span>
               </div>
 
-              {/* Right header: controls */}
+              {/* Right header: session info */}
               <div className="flex items-center gap-4 w-full sm:w-auto justify-end">
-                {/* Simulated Date */}
                 <div className="hidden md:flex items-center gap-2 text-xs font-semibold text-slate-500 bg-slate-50 border border-slate-100 rounded-xl px-4 py-2.5">
                   <i className="fi fi-rr-calendar text-primary-600" />
-                  <span>Senin, 7 September 2026</span>
+                  <span>
+                    {new Date().toLocaleDateString('id-ID', {
+                      weekday: 'long',
+                      day: 'numeric',
+                      month: 'long',
+                      year: 'numeric',
+                    })}
+                  </span>
                 </div>
 
-                {/* Role Switcher */}
-                <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200/60 shrink-0">
-                  <button
-                    onClick={() => handleRoleSwitch('admin')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                      activeRole === 'admin'
-                        ? 'bg-white text-slate-900 shadow-sm'
-                        : 'text-slate-500 hover:text-slate-800'
-                    }`}
-                  >
-                    <i className="fi fi-rr-user-crown mr-1.5" /> Admin
-                  </button>
-                  <button
-                    onClick={() => handleRoleSwitch('employee')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                      activeRole === 'employee'
-                        ? 'bg-white text-slate-900 shadow-sm'
-                        : 'text-slate-500 hover:text-slate-800'
-                    }`}
-                  >
-                    <i className="fi fi-rr-user mr-1.5" /> Karyawan
-                  </button>
+                {/* Role is issued by the server at login — it is no longer switchable from the UI. */}
+                <div className="flex items-center gap-2 bg-slate-100 px-3 py-2 rounded-xl border border-slate-200/60 shrink-0">
+                  <i className={`fi ${activeRole === 'admin' ? 'fi-rr-user-crown text-primary-600' : 'fi-rr-user text-slate-500'} text-xs`} />
+                  <span className="text-xs font-semibold text-slate-800">
+                    {ROLE_LABEL[userRole]}
+                  </span>
+                  <span className="text-xs text-slate-400 hidden sm:inline">· {user?.email}</span>
                 </div>
               </div>
             </header>
 
             {/* MAIN CONTAINER */}
             <main className="flex-1 p-6 max-w-7xl w-full mx-auto">
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={activeTab + '-' + activeRole}
-                  initial={{ opacity: 0, y: 15 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -15 }}
-                  transition={{ duration: 0.25 }}
-                >
+              {/* No AnimatePresence here: with React 19 StrictMode its "wait" mode can leave the
+                  exiting tab mounted forever, freezing the console on the previous module. */}
+              <motion.div
+                key={activeTab + '-' + activeRole}
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.25 }}
+              >
                   {activeTab === 'v1' && (
                     <V1_Payslip
                       employees={employees}
@@ -497,12 +449,19 @@ function App() {
                       slips={slips}
                       components={components}
                       activeRole={activeRole}
-                      currentEmployeeId={currentEmployeeId}
+                      userRole={userRole}
+                      activeSubTab={subTabOf('v1') as never}
+                      onNavigate={(t) => setSubTabs((prev) => ({ ...prev, v1: t }))}
+                      currentEmployeeId={user?.employeeId}
                       onAddEmployee={handleAddEmployee}
+                      onCreateLogin={handleCreateLogin}
                       onEditEmployee={handleEditEmployee}
                       onDeleteEmployee={handleDeleteEmployee}
                       onGenerateSlip={handleGenerateSlip}
                       onDeleteSlip={handleDeleteSlip}
+                      onConfirmReceipt={handleConfirmReceipt}
+                      onDisputeReceipt={handleDisputeReceipt}
+                      onDownloadPdf={handleDownloadSlipPdf}
                       addToast={addToast}
                     />
                   )}
@@ -514,7 +473,10 @@ function App() {
                       slips={slips}
                       components={components}
                       activeRole={activeRole}
-                      currentEmployeeId={currentEmployeeId}
+                      userRole={userRole}
+                      activeSubTab={subTabOf('v2') as never}
+                      currentEmployeeId={user?.employeeId}
+                      onAttendanceChanged={() => user && loadData(user.role)}
                       onUpdateAttendance={handleUpdateAttendance}
                       onAddComponent={handleAddComponent}
                       onUpdateComponent={handleUpdateComponent}
@@ -526,22 +488,21 @@ function App() {
 
                   {activeTab === 'v3' && (
                     <V3_Automation
-                      employees={employees}
                       slips={slips}
                       auditLogs={auditLogs}
                       scheduledConfig={scheduledConfig}
-                      simulatedEmails={simulatedEmails}
+                      notifications={notifications}
                       activeRole={activeRole}
-                      currentEmployeeId={currentEmployeeId}
+                      userRole={userRole}
+                      activeSubTab={subTabOf('v3') as never}
                       onUpdateScheduledConfig={handleUpdateScheduledConfig}
-                      onDisbursePayroll={handleDisbursePayroll}
-                      onReadEmail={handleReadEmail}
+                      onDisbursePayroll={handleMarkAllPaid}
+                      onResolveDispute={handleResolveDispute}
                       addToast={addToast}
                       onViewSlipFromEmail={handleViewSlipFromEmail}
                     />
                   )}
-                </motion.div>
-              </AnimatePresence>
+              </motion.div>
             </main>
           </div>
         </div>
@@ -567,13 +528,10 @@ function App() {
                 </div>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => {
-                      addToast('Mencetak Slip', 'Membuka dialog pencetakan dokumen...', 'info');
-                      window.print();
-                    }}
+                    onClick={() => viewingSlip && handleDownloadSlipPdf(viewingSlip)}
                     className="px-4 py-2 text-xs font-semibold text-white bg-primary-600 hover:bg-primary-700 rounded-xl shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
                   >
-                    <i className="fi fi-rr-download" /> Cetak / PDF
+                    <i className="fi fi-rr-download" /> Unduh PDF
                   </button>
                   <button
                     onClick={() => setViewingSlip(null)}
@@ -584,155 +542,7 @@ function App() {
                 </div>
               </div>
 
-              {/* Printable Payslip Body */}
-              <div id="printable-payslip" className="p-8 space-y-6 text-slate-800 print-card">
-                {/* Payslip Header */}
-                <div className="flex items-start justify-between border-b-2 border-slate-900/10 pb-6">
-                  <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-primary-600 to-secondary-500 flex items-center justify-center text-white shadow-md">
-                      <i className="fi fi-rr-bolt text-xl" />
-                    </div>
-                    <div>
-                      <h2 className="font-black text-xl tracking-tight text-slate-900 leading-none">VeloxPay</h2>
-                      <span className="text-[9px] font-semibold text-slate-400 tracking-wider uppercase block mt-1">PT Velox Solusi Nusantara</span>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <h3 className="font-black text-lg text-slate-900">SLIP GAJI DIGITAL</h3>
-                    <span className="text-xs text-slate-500">ID Dokumen: {viewingSlip.id}</span>
-                  </div>
-                </div>
-
-                {/* Metadata Details */}
-                <div className="grid grid-cols-2 gap-6 text-xs border-b border-slate-100 pb-6">
-                  <div className="space-y-2">
-                    <div className="grid grid-cols-3">
-                      <span className="text-slate-400">Nama Karyawan</span>
-                      <span className="col-span-2 font-bold text-slate-900">: {viewingSlip.employeeName}</span>
-                    </div>
-                    <div className="grid grid-cols-3">
-                      <span className="text-slate-400">ID Karyawan</span>
-                      <span className="col-span-2 font-semibold text-slate-700">: {viewingSlip.employeeId}</span>
-                    </div>
-                    <div className="grid grid-cols-3">
-                      <span className="text-slate-400">Jabatan / Divisi</span>
-                      <span className="col-span-2 font-semibold text-slate-700">: {viewingSlip.employeeRole} / {viewingSlip.employeeDepartment}</span>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2 text-right">
-                    <div className="grid grid-cols-3">
-                      <span className="text-slate-400 text-left sm:text-right col-span-2">Periode Gaji</span>
-                      <span className="font-bold text-slate-900 text-right">
-                        : {new Date(viewingSlip.month + "-01").toLocaleDateString('id-ID', { month: 'long', year: 'numeric' })}
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-3">
-                      <span className="text-slate-400 text-left sm:text-right col-span-2">Status Transfer</span>
-                      <span className="font-bold text-emerald-600 text-right">
-                        : SUKSES
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-3">
-                      <span className="text-slate-400 text-left sm:text-right col-span-2">Tanggal Terbit</span>
-                      <span className="font-semibold text-slate-700 text-right">
-                        : {new Date(viewingSlip.generatedAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Breakdown Details */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 text-xs">
-                  {/* Earnings */}
-                  <div className="space-y-3">
-                    <h4 className="font-bold text-slate-900 border-b border-slate-100 pb-2">1. PENDAPATAN (EARNINGS)</h4>
-                    <div className="space-y-2">
-                      <div className="flex justify-between">
-                        <span className="text-slate-500">Gaji Pokok</span>
-                        <span className="font-semibold text-slate-800">
-                          {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(viewingSlip.baseSalary)}
-                        </span>
-                      </div>
-                      {viewingSlip.overtimeHours > 0 && (
-                        <div className="flex justify-between">
-                          <span className="text-slate-500">Lembur ({viewingSlip.overtimeHours} Jam)</span>
-                          <span className="font-semibold text-slate-800">
-                            {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(viewingSlip.overtimePay)}
-                          </span>
-                        </div>
-                      )}
-                      {viewingSlip.allowances.map((allow, idx) => (
-                        <div key={idx} className="flex justify-between">
-                          <span className="text-slate-500">{allow.name}</span>
-                          <span className="font-semibold text-slate-800">
-                            {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(allow.amount)}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Deductions */}
-                  <div className="space-y-3">
-                    <h4 className="font-bold text-slate-900 border-b border-slate-100 pb-2">2. POTONGAN (DEDUCTIONS)</h4>
-                    <div className="space-y-2">
-                      {viewingSlip.deductions.length === 0 ? (
-                        <div className="text-slate-400 italic">Tidak ada potongan.</div>
-                      ) : (
-                        viewingSlip.deductions.map((ded, idx) => (
-                          <div key={idx} className="flex justify-between">
-                            <span className="text-slate-500">{ded.name}</span>
-                            <span className="font-semibold text-slate-800 text-rose-600">
-                              ({new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(ded.amount)})
-                            </span>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Summary Totals */}
-                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-                  <div>
-                    <span className="text-slate-400 block mb-1">Total Pendapatan Kotor</span>
-                    <span className="font-bold text-slate-800">
-                      {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(viewingSlip.grossSalary)}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-slate-400 block mb-1">Total Potongan</span>
-                    <span className="font-bold text-rose-600">
-                      ({new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(viewingSlip.deductions.reduce((acc, curr) => acc + curr.amount, 0))})
-                    </span>
-                  </div>
-                  <div className="border-t md:border-t-0 md:border-l border-slate-200/60 pt-3 md:pt-0 md:pl-4">
-                    <span className="text-primary-600 font-bold block mb-1 uppercase tracking-wider">Gaji Bersih Diterima (THP)</span>
-                    <span className="text-lg font-black text-slate-900">
-                      {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(viewingSlip.netSalary)}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Signatures */}
-                <div className="grid grid-cols-2 gap-12 pt-8 text-xs">
-                  <div className="text-center space-y-12">
-                    <span className="text-slate-400 block">Diterima Oleh,</span>
-                    <div>
-                      <span className="font-bold text-slate-900 block underline">{viewingSlip.employeeName}</span>
-                      <span className="text-[10px] text-slate-400">Karyawan</span>
-                    </div>
-                  </div>
-                  <div className="text-center space-y-12">
-                    <span className="text-slate-400 block">Disahkan Oleh,</span>
-                    <div>
-                      <span className="font-bold text-slate-900 block underline">Dewi Lestari</span>
-                      <span className="text-[10px] text-slate-400">Finance & HR Manager</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
+              <PayslipDocument slip={viewingSlip} />
             </motion.div>
           </div>
         )}
