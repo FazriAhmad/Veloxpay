@@ -8,8 +8,25 @@ export interface AuthUser {
   companyId: string;
   name: string;
   email: string;
-  role: 'admin' | 'employee';
+  role: 'admin' | 'finance' | 'approver' | 'employee';
   employeeId?: string;
+}
+
+export interface AttendanceRequest {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  month: string;
+  present: number;
+  sick: number;
+  leave: number;
+  alpha: number;
+  overtimeHours: number;
+  note?: string;
+  status: 'Pending' | 'Approved' | 'Rejected';
+  decidedBy?: string;
+  decisionNote?: string;
+  createdAt: string;
 }
 
 export const getToken = () => localStorage.getItem(TOKEN_KEY);
@@ -68,8 +85,24 @@ export const api = {
   listSlips: () => request<PayrollSlip[]>('/slips'),
   createSlip: (slip: Omit<PayrollSlip, 'id' | 'generatedAt'>) =>
     post<PayrollSlip & { warnings?: string[] }>('/slips', slip),
-  updateSlipStatus: (id: string, status: PayrollSlip['status']) =>
-    patch<PayrollSlip>(`/slips/${id}/status`, { status }),
+  updateSlipStatus: (id: string, status: PayrollSlip['status'], paymentReference?: string) =>
+    patch<PayrollSlip>(`/slips/${id}/status`, { status, paymentReference }),
+  confirmReceipt: (id: string) => post<PayrollSlip>(`/slips/${id}/receipt`, { action: 'confirm' }),
+  disputeReceipt: (id: string, note: string) => post<PayrollSlip>(`/slips/${id}/receipt`, { action: 'dispute', note }),
+  resolveDispute: (id: string, note: string, paymentReference?: string) =>
+    post<PayrollSlip>(`/slips/${id}/resolve-dispute`, { note, paymentReference }),
+  // Gives an existing employee record a login (role employee). 409 if the email already has one.
+  createEmployeeLogin: (employeeId: string, email: string, password: string) =>
+    post<{ id: string }>('/users', { employeeId, email, password }),
+  listAttendanceRequests: () => request<AttendanceRequest[]>('/attendance-requests'),
+  createAttendanceRequest: (data: Pick<AttendanceRequest, 'month' | 'present' | 'sick' | 'leave' | 'alpha' | 'overtimeHours'> & { note?: string }) =>
+    post<AttendanceRequest>('/attendance-requests', data),
+  cancelAttendanceRequest: (id: string) => request<void>(`/attendance-requests/${id}`, { method: 'DELETE' }),
+  decideAttendanceRequest: (id: string, decision: 'Approved' | 'Rejected', note?: string) =>
+    patch<AttendanceRequest>(`/attendance-requests/${id}/decision`, { decision, note }),
+  getSettings: () => request<{ requireSeparateApprover: boolean }>('/settings'),
+  updateSettings: (requireSeparateApprover: boolean) =>
+    request<{ requireSeparateApprover: boolean }>('/settings', { method: 'PUT', body: JSON.stringify({ requireSeparateApprover }) }),
   deleteSlip: (id: string) => request<void>(`/slips/${id}`, { method: 'DELETE' }),
   // Blob response, not JSON — bypasses `request` and attaches the auth header directly.
   downloadSlipPdf: async (id: string): Promise<Blob> => {

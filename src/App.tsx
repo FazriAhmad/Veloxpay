@@ -1,3 +1,4 @@
+import { visibleItems, resolveSubTab, ModuleId } from './lib/navigation';
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -20,10 +21,24 @@ import { V3_Automation } from './components/V3_Automation';
 import { ToastContainer, ToastMessage } from './components/Toast';
 import { PayslipDocument } from './components/PayslipDocument';
 
+const ROLE_LABEL = { admin: 'Administrator', finance: 'Keuangan', approver: 'Penyetuju', employee: 'Karyawan' } as const;
+
+const MODULE_TITLE: Record<ModuleId, string> = {
+  v1: 'Fase V1: Digital Payslip',
+  v2: 'Fase V2: Payroll Management',
+  v3: 'Fase V3: Automated Payroll',
+};
+const MODULE_ACTIVE: Record<ModuleId, string> = {
+  v1: 'bg-primary-600 text-white shadow-md shadow-primary-500/10',
+  v2: 'bg-secondary-600 text-white shadow-md',
+  v3: 'bg-purple-600 text-white shadow-md',
+};
+
 function App() {
   // --- APPLICATION STATE ---
   const [currentView, setCurrentView] = useState<'landing' | 'login' | 'dashboard'>('landing');
   const [activeTab, setActiveTab] = useState<'v1' | 'v2' | 'v3'>('v1');
+  const [subTabs, setSubTabs] = useState<Partial<Record<ModuleId, string>>>({});
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isBooting, setIsBooting] = useState(!!getToken());
 
@@ -117,10 +132,11 @@ function App() {
     setUser(loggedIn);
     await loadData(loggedIn.role);
     setActiveTab('v1');
+    setSubTabs({});
     setCurrentView('dashboard');
     addToast(
       'Berhasil Masuk',
-      `Selamat datang, ${loggedIn.name} (${loggedIn.role === 'admin' ? 'Administrator' : 'Karyawan'})`,
+      `Selamat datang, ${loggedIn.name} (${ROLE_LABEL[loggedIn.role]})`,
       'success'
     );
   };
@@ -139,11 +155,26 @@ function App() {
   };
 
   // --- DATA HANDLERS ---
-  const handleAddEmployee = (emp: Omit<Employee, 'id' | 'joinDate'>) =>
+  const handleAddEmployee = (emp: Omit<Employee, 'id' | 'joinDate'>, loginPassword?: string) =>
     runAction(async () => {
       const result = await api.createEmployee(emp);
       result.warnings?.forEach((w) => addToast('Perhatian', w, 'warning'));
+      if (loginPassword) {
+        try {
+          await api.createEmployeeLogin(result.id, emp.email, loginPassword);
+          addToast('Login Dibuat', `${emp.name} dapat masuk dengan ${emp.email}.`, 'success');
+        } catch (err) {
+          // The employee exists already; say so rather than reporting the whole add as failed.
+          addToast('Karyawan Tersimpan, Login Gagal', err instanceof Error ? err.message : 'Terjadi kesalahan.', 'error');
+        }
+      }
     }, 'Gagal Menambah Karyawan');
+
+  const handleCreateLogin = (emp: Employee, password: string) =>
+    runAction(async () => {
+      await api.createEmployeeLogin(emp.id, emp.email, password);
+      addToast('Login Dibuat', `${emp.name} dapat masuk dengan ${emp.email}.`, 'success');
+    }, 'Gagal Membuat Login');
 
   const handleEditEmployee = (emp: Employee) =>
     runAction(async () => {
@@ -199,12 +230,31 @@ function App() {
   // admin's confirmation that payment already happened through the company's bank.
   // The server sends the real payslip email (or honestly logs why it couldn't) as
   // part of the same status-update call — see PATCH /slips/:id/status.
-  const handleMarkAllPaid = () =>
+  // references: slip id -> transfer reference typed for that slip (may be missing or empty).
+  const handleMarkAllPaid = (references: Record<string, string>) =>
     runAction(async () => {
       const approved = slips.filter((s) => s.status === 'Approved');
       if (approved.length === 0) return;
-      await Promise.all(approved.map((s) => api.updateSlipStatus(s.id, 'Paid')));
+      await Promise.all(approved.map((s) => api.updateSlipStatus(s.id, 'Paid', references[s.id]?.trim() || undefined)));
     }, 'Gagal Menandai Slip Dibayar');
+
+  const handleConfirmReceipt = (slip: PayrollSlip) =>
+    runAction(async () => {
+      await api.confirmReceipt(slip.id);
+      addToast('Terima Kasih', 'Penerimaan gaji Anda sudah dikonfirmasi.', 'success');
+    }, 'Gagal Mengonfirmasi');
+
+  const handleDisputeReceipt = (slip: PayrollSlip, note: string) =>
+    runAction(async () => {
+      await api.disputeReceipt(slip.id, note);
+      addToast('Laporan Terkirim', 'Petugas akan memeriksa pembayaran Anda.', 'info');
+    }, 'Gagal Melaporkan');
+
+  const handleResolveDispute = (slip: PayrollSlip, note: string, reference?: string) =>
+    runAction(async () => {
+      await api.resolveDispute(slip.id, note, reference);
+      addToast('Tanggapan Terkirim', 'Karyawan diminta mengonfirmasi lagi.', 'success');
+    }, 'Gagal Menanggapi');
 
   const handleDownloadSlipPdf = async (slip: PayrollSlip) => {
     try {
@@ -232,13 +282,26 @@ function App() {
     );
   }
 
-  const activeRole = user?.role ?? 'employee';
+  const userRole = user?.role ?? 'employee';
+  // finance / approver / admin all get the staff screens; what each may do is gated per button
+  // (and, authoritatively, by the server).
+  const activeRole = userRole === 'employee' ? 'employee' : 'admin';
   const initials = (user?.name || '??')
     .split(' ')
     .map((w) => w[0])
     .slice(0, 2)
     .join('')
     .toUpperCase();
+
+  const navBadge = (mod: ModuleId, id: string) => {
+    if (mod === 'v2' && id === 'approval') return slips.filter((x) => x.status === 'Draft' || x.status === 'Pending Approval').length;
+    // staff: payments the employee says never arrived; employee: payments waiting for their answer
+    if (mod === 'v3' && id === 'payment-status') return slips.filter((x) => x.receiptStatus === 'Disputed').length;
+    if (mod === 'v1' && id === 'history' && userRole === 'employee') return slips.filter((x) => x.status === 'Paid' && x.receiptStatus === 'Awaiting').length;
+    if (mod === 'v3' && id === 'emails') return notifications.filter((n) => n.status === 'failed').length;
+    return 0;
+  };
+  const subTabOf = (mod: ModuleId) => resolveSubTab(mod, userRole, subTabs[mod]);
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans selection:bg-primary-100 selection:text-primary-900">
@@ -275,62 +338,35 @@ function App() {
 
               {/* Sidebar Menu */}
               <nav className="space-y-6">
-                {/* V1 Menu */}
-                <div className="space-y-2">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block px-3">Fase V1: Digital Payslip</span>
-                  <button
-                    onClick={() => {
-                      setActiveTab('v1');
-                      addToast('Menu V1', 'Membuka modul Digital Payslip.', 'info');
-                    }}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                      activeTab === 'v1'
-                        ? 'bg-primary-600 text-white shadow-md shadow-primary-500/10'
-                        : 'hover:bg-slate-800 hover:text-slate-200'
-                    }`}
-                  >
-                    <i className="fi fi-rr-document-signed text-sm" />
-                    <span>Digital Payslip Portal</span>
-                  </button>
-                </div>
-
-                {/* V2 Menu */}
-                <div className="space-y-2">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block px-3">Fase V2: Payroll Management</span>
-                  <button
-                    onClick={() => {
-                      setActiveTab('v2');
-                      addToast('Menu V2', 'Membuka modul Payroll Management.', 'info');
-                    }}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                      activeTab === 'v2'
-                        ? 'bg-secondary-600 text-white shadow-md'
-                        : 'hover:bg-slate-800 hover:text-slate-200'
-                    }`}
-                  >
-                    <i className="fi fi-rr-chart-pie-alt text-sm" />
-                    <span>Payroll Management</span>
-                  </button>
-                </div>
-
-                {/* V3 Menu */}
-                <div className="space-y-2">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block px-3">Fase V3: Automated Payroll</span>
-                  <button
-                    onClick={() => {
-                      setActiveTab('v3');
-                      addToast('Menu V3', 'Membuka modul Automated Payroll.', 'info');
-                    }}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                      activeTab === 'v3'
-                        ? 'bg-purple-600 text-white shadow-md'
-                        : 'hover:bg-slate-800 hover:text-slate-200'
-                    }`}
-                  >
-                    <i className="fi fi-rr-settings-sliders text-sm" />
-                    <span>Automated Payroll</span>
-                  </button>
-                </div>
+                {(['v1', 'v2', 'v3'] as const).map((mod) => (
+                  <div key={mod} className="space-y-1">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block px-3 pb-1">
+                      {MODULE_TITLE[mod]}
+                    </span>
+                    {visibleItems(mod, userRole).map((item) => {
+                      const active = activeTab === mod && resolveSubTab(mod, userRole, subTabs[mod]) === item.id;
+                      const badge = navBadge(mod, item.id);
+                      return (
+                        <button
+                          key={item.id}
+                          onClick={() => {
+                            setActiveTab(mod);
+                            setSubTabs((prev) => ({ ...prev, [mod]: item.id }));
+                          }}
+                          className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                            active ? MODULE_ACTIVE[mod] : 'hover:bg-slate-800 hover:text-slate-200'
+                          }`}
+                        >
+                          <i className={`fi ${item.icon} text-sm`} />
+                          <span className="flex-1 text-left">{item.label}</span>
+                          {badge > 0 && (
+                            <span className="px-1.5 py-0.5 text-[10px] font-bold text-white bg-rose-500 rounded-full">{badge}</span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))}
               </nav>
             </div>
 
@@ -343,7 +379,7 @@ function App() {
                 <div>
                   <span className="font-bold text-xs text-white block leading-none">{user?.name}</span>
                   <span className="text-[10px] text-slate-500 block mt-1">
-                    {activeRole === 'admin' ? 'Admin / HR Manager' : 'Karyawan'}
+                    {userRole === 'admin' ? 'Admin / HR Manager' : ROLE_LABEL[userRole]}
                   </span>
                 </div>
               </div>
@@ -389,7 +425,7 @@ function App() {
                 <div className="flex items-center gap-2 bg-slate-100 px-3 py-2 rounded-xl border border-slate-200/60 shrink-0">
                   <i className={`fi ${activeRole === 'admin' ? 'fi-rr-user-crown text-primary-600' : 'fi-rr-user text-slate-500'} text-xs`} />
                   <span className="text-xs font-semibold text-slate-800">
-                    {activeRole === 'admin' ? 'Admin' : 'Karyawan'}
+                    {ROLE_LABEL[userRole]}
                   </span>
                   <span className="text-xs text-slate-400 hidden sm:inline">· {user?.email}</span>
                 </div>
@@ -413,12 +449,18 @@ function App() {
                       slips={slips}
                       components={components}
                       activeRole={activeRole}
+                      userRole={userRole}
+                      activeSubTab={subTabOf('v1') as never}
+                      onNavigate={(t) => setSubTabs((prev) => ({ ...prev, v1: t }))}
                       currentEmployeeId={user?.employeeId}
                       onAddEmployee={handleAddEmployee}
+                      onCreateLogin={handleCreateLogin}
                       onEditEmployee={handleEditEmployee}
                       onDeleteEmployee={handleDeleteEmployee}
                       onGenerateSlip={handleGenerateSlip}
                       onDeleteSlip={handleDeleteSlip}
+                      onConfirmReceipt={handleConfirmReceipt}
+                      onDisputeReceipt={handleDisputeReceipt}
                       onDownloadPdf={handleDownloadSlipPdf}
                       addToast={addToast}
                     />
@@ -431,7 +473,10 @@ function App() {
                       slips={slips}
                       components={components}
                       activeRole={activeRole}
+                      userRole={userRole}
+                      activeSubTab={subTabOf('v2') as never}
                       currentEmployeeId={user?.employeeId}
+                      onAttendanceChanged={() => user && loadData(user.role)}
                       onUpdateAttendance={handleUpdateAttendance}
                       onAddComponent={handleAddComponent}
                       onUpdateComponent={handleUpdateComponent}
@@ -448,8 +493,11 @@ function App() {
                       scheduledConfig={scheduledConfig}
                       notifications={notifications}
                       activeRole={activeRole}
+                      userRole={userRole}
+                      activeSubTab={subTabOf('v3') as never}
                       onUpdateScheduledConfig={handleUpdateScheduledConfig}
                       onDisbursePayroll={handleMarkAllPaid}
+                      onResolveDispute={handleResolveDispute}
                       addToast={addToast}
                       onViewSlipFromEmail={handleViewSlipFromEmail}
                     />

@@ -55,11 +55,18 @@ export const toSlipDTO = (r) => ({
   paymentDate: r.payment_date ? new Date(r.payment_date).toISOString().slice(0, 10) : undefined,
   generatedAt: r.generated_at.toISOString(),
   approvedBy: r.approved_by || undefined,
+  createdBy: r.created_by || undefined,
+  paymentReference: r.payment_reference || undefined,
+  receiptStatus: r.receipt_status || undefined,
+  receiptAt: r.receipt_at ? new Date(r.receipt_at).toISOString() : undefined,
+  disputeNote: r.dispute_note || undefined,
+  resolutionNote: r.resolution_note || undefined,
 });
 
 export const toNotificationDTO = (r) => ({
   id: r.id,
   slipId: r.slip_id || undefined,
+  kind: r.kind || undefined,
   to: r.to_email,
   subject: r.subject,
   status: r.status,

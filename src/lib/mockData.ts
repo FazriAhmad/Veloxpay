@@ -60,6 +60,13 @@ export interface PayrollSlip {
   paymentDate?: string;
   generatedAt: string;
   approvedBy?: string;
+  createdBy?: string;
+  paymentReference?: string;
+  // Set once the slip is Paid: the employee's answer to "did the money arrive?"
+  receiptStatus?: 'Awaiting' | 'Received' | 'Disputed';
+  receiptAt?: string;
+  disputeNote?: string;
+  resolutionNote?: string;
 }
 
 export interface AuditLog {
@@ -86,6 +93,7 @@ export interface ScheduledConfig {
 export interface NotificationLogEntry {
   id: string;
   slipId?: string;
+  kind?: string;
   to: string;
   subject: string;
   status: 'sent' | 'failed' | 'skipped';

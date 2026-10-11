@@ -1,3 +1,5 @@
+import { ReceiptBadge } from './ReceiptBadge';
+import { FormDialog } from './FormDialog';
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Employee, Attendance, PayrollSlip, SalaryComponent, PTKP_STATUSES } from '../lib/mockData';
@@ -11,12 +13,18 @@ interface V1PayslipProps {
   slips: PayrollSlip[];
   components: SalaryComponent[];
   activeRole: 'admin' | 'employee';
+  activeSubTab: 'employees' | 'input' | 'history';
+  onNavigate: (subTab: 'employees' | 'input' | 'history') => void;
+  userRole: 'admin' | 'finance' | 'approver' | 'employee';
   currentEmployeeId?: string;
-  onAddEmployee: (emp: Omit<Employee, 'id' | 'joinDate'>) => void;
+  onAddEmployee: (emp: Omit<Employee, 'id' | 'joinDate'>, loginPassword?: string) => void;
+  onCreateLogin: (emp: Employee, password: string) => void;
   onEditEmployee: (emp: Employee) => void;
   onDeleteEmployee: (id: string) => void;
   onGenerateSlip: (slip: Omit<PayrollSlip, 'id' | 'generatedAt'>) => void;
   onDeleteSlip: (id: string) => void;
+  onConfirmReceipt: (slip: PayrollSlip) => void;
+  onDisputeReceipt: (slip: PayrollSlip, note: string) => void;
   onDownloadPdf: (slip: PayrollSlip) => Promise<void>;
   addToast: (title: string, message: string, type: 'success' | 'error' | 'info' | 'warning') => void;
 }
@@ -27,20 +35,23 @@ export const V1_Payslip: React.FC<V1PayslipProps> = ({
   slips,
   components,
   activeRole,
+  activeSubTab,
+  onNavigate,
+  userRole,
   currentEmployeeId,
   onAddEmployee,
+  onCreateLogin,
   onEditEmployee,
   onDeleteEmployee,
   onGenerateSlip,
   onDeleteSlip,
+  onConfirmReceipt,
+  onDisputeReceipt,
   onDownloadPdf,
   addToast,
 }) => {
-  // "employees" and "input" are admin-only views, so an employee must start on the
-  // one sub-tab they can actually see — otherwise they land on a blank page.
-  const [activeSubTab, setActiveSubTab] = useState<'employees' | 'input' | 'history'>(
-    activeRole === 'employee' ? 'history' : 'employees'
-  );
+  const canPrepare = userRole === 'admin' || userRole === 'finance';
+  const [dialog, setDialog] = useState<{ kind: 'login'; emp: Employee } | { kind: 'dispute'; slip: PayrollSlip } | null>(null);
   
   // Modals state
   const [isEmpModalOpen, setIsEmpModalOpen] = useState(false);
@@ -56,6 +67,7 @@ export const V1_Payslip: React.FC<V1PayslipProps> = ({
   const [empBankName, setEmpBankName] = useState('BCA');
   const [empBankAccount, setEmpBankAccount] = useState('');
   const [empPtkpStatus, setEmpPtkpStatus] = useState<string>('TK/0');
+  const [empLoginPassword, setEmpLoginPassword] = useState('');
 
   // Payroll Input State
   const [selectedEmpId, setSelectedEmpId] = useState('');
@@ -86,6 +98,7 @@ export const V1_Payslip: React.FC<V1PayslipProps> = ({
     setEmpModalMode('add');
     setEmpName('');
     setEmpEmail('');
+    setEmpLoginPassword('');
     setEmpRole('');
     setEmpDept('');
     setEmpBaseSalary('');
@@ -138,6 +151,11 @@ export const V1_Payslip: React.FC<V1PayslipProps> = ({
       return;
     }
 
+    if (empModalMode === 'add' && empLoginPassword && empLoginPassword.length < 8) {
+      addToast('Password Terlalu Pendek', 'Password login minimal 8 karakter.', 'warning');
+      return;
+    }
+
     if (empModalMode === 'add') {
       onAddEmployee({
         name: empName,
@@ -148,7 +166,7 @@ export const V1_Payslip: React.FC<V1PayslipProps> = ({
         bankName: empBankName,
         bankAccount: empBankAccount,
         ptkpStatus: empPtkpStatus,
-      });
+      }, empLoginPassword || undefined);
       addToast('Karyawan Ditambahkan', `Karyawan ${empName} berhasil didaftarkan.`, 'success');
     } else if (empModalMode === 'edit' && editingEmp) {
       onEditEmployee({
@@ -168,13 +186,13 @@ export const V1_Payslip: React.FC<V1PayslipProps> = ({
   };
 
   // Select employee for input payroll, auto-populate details
-  const handleSelectEmployeeForPayroll = (empId: string) => {
+  const handleSelectEmployeeForPayroll = (empId: string, month: string = payrollMonth) => {
     setSelectedEmpId(empId);
     const emp = employees.find(e => e.id === empId);
     if (!emp) return;
 
     // Try to find attendance for this employee
-    const att = attendance.find(a => a.employeeId === empId && a.month === payrollMonth);
+    const att = attendance.find(a => a.employeeId === empId && a.month === month);
     if (att) {
       setWorkingDays(att.present.toString());
       setOvertimeHours(att.overtimeHours.toString());
@@ -295,7 +313,7 @@ export const V1_Payslip: React.FC<V1PayslipProps> = ({
     setSelectedEmpId('');
     setCustomAllowances([]);
     setCustomDeductions([]);
-    setActiveSubTab('history');
+    onNavigate('history');
   };
 
   // Fetches the real, server-generated PDF (see server/pdf.js) — no more window.print().
@@ -341,7 +359,7 @@ export const V1_Payslip: React.FC<V1PayslipProps> = ({
       Paid: 'bg-emerald-50 text-emerald-700 border-emerald-200',
     };
     return (
-      <span className={`px-2.5 py-1 text-xs font-semibold rounded-full border ${styles[status]}`}>
+      <span className={`px-2.5 py-1 text-xs font-semibold rounded-full border whitespace-nowrap ${styles[status]}`}>
         {status === 'Draft' ? 'Draf' : status === 'Pending Approval' ? 'Menunggu Approval' : status === 'Approved' ? 'Disetujui' : 'Dibayar'}
       </span>
     );
@@ -349,44 +367,29 @@ export const V1_Payslip: React.FC<V1PayslipProps> = ({
 
   return (
     <div className="space-y-6">
+      {dialog?.kind === 'login' && (
+        <FormDialog
+          title={`Buat login untuk ${dialog.emp.name}`}
+          description={`Karyawan masuk dengan email ${dialog.emp.email}. Berikan password ini kepadanya; ia dapat langsung memakainya.`}
+          fields={[{ name: 'password', label: 'Password', type: 'password', required: true, minLength: 8, hint: 'Minimal 8 karakter.' }]}
+          submitLabel="Buat Login"
+          onSubmit={(v) => onCreateLogin(dialog.emp, v.password)}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog?.kind === 'dispute' && (
+        <FormDialog
+          title="Gaji belum Anda terima?"
+          description={`Slip ${dialog.slip.id}. Petugas akan memeriksa pembayaran dan menanggapi laporan Anda.`}
+          fields={[{ name: 'reason', label: 'Jelaskan masalahnya', type: 'textarea', required: true, maxLength: 500, placeholder: 'Mis. belum ada dana masuk di rekening BCA saya' }]}
+          submitLabel="Kirim Laporan"
+          tone="danger"
+          onSubmit={(v) => onDisputeReceipt(dialog.slip, v.reason)}
+          onClose={() => setDialog(null)}
+        />
+      )}
       {/* Tab Navigation */}
-      <div className="flex items-center justify-between border-b border-slate-200/60 pb-1.5 no-print">
-        <div className="flex gap-2">
-          {activeRole === 'admin' && (
-            <>
-              <button
-                onClick={() => setActiveSubTab('employees')}
-                className={`px-4 py-2 text-sm font-semibold border-b-2 transition-all cursor-pointer ${
-                  activeSubTab === 'employees'
-                    ? 'border-primary-600 text-primary-600'
-                    : 'border-transparent text-slate-500 hover:text-slate-900'
-                }`}
-              >
-                <i className="fi fi-rr-users-alt mr-2" /> Data Karyawan
-              </button>
-              <button
-                onClick={() => setActiveSubTab('input')}
-                className={`px-4 py-2 text-sm font-semibold border-b-2 transition-all cursor-pointer ${
-                  activeSubTab === 'input'
-                    ? 'border-primary-600 text-primary-600'
-                    : 'border-transparent text-slate-500 hover:text-slate-900'
-                }`}
-              >
-                <i className="fi fi-rr-calculator-money mr-2" /> Input Payroll
-              </button>
-            </>
-          )}
-          <button
-            onClick={() => setActiveSubTab('history')}
-            className={`px-4 py-2 text-sm font-semibold border-b-2 transition-all cursor-pointer ${
-              activeSubTab === 'history'
-                ? 'border-primary-600 text-primary-600'
-                : 'border-transparent text-slate-500 hover:text-slate-900'
-            }`}
-          >
-            <i className="fi fi-rr-receipt mr-2" /> Riwayat Slip
-          </button>
-        </div>
+      <div className="flex items-center justify-end no-print empty:hidden">
 
         {activeSubTab === 'employees' && activeRole === 'admin' && (
           <button
@@ -462,6 +465,15 @@ export const V1_Payslip: React.FC<V1PayslipProps> = ({
                           >
                             <i className="fi fi-rr-gift text-xs" />
                           </button>
+                          {userRole === 'admin' && (
+                            <button
+                              onClick={() => setDialog({ kind: 'login', emp })}
+                              className="p-2 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
+                              title="Buat Login Karyawan"
+                            >
+                              <i className="fi fi-rr-key text-xs" />
+                            </button>
+                          )}
                           <button
                             onClick={() => openEditEmpModal(emp)}
                             className="p-2 text-slate-500 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-all"
@@ -492,7 +504,7 @@ export const V1_Payslip: React.FC<V1PayslipProps> = ({
         )}
 
         {/* INPUT PAYROLL SUBTAB */}
-        {activeSubTab === 'input' && activeRole === 'admin' && (
+        {activeSubTab === 'input' && canPrepare && (
           <motion.div
             key="input"
             initial={{ opacity: 0, y: 15 }}
@@ -532,7 +544,7 @@ export const V1_Payslip: React.FC<V1PayslipProps> = ({
                     value={payrollMonth}
                     onChange={(e) => {
                       setPayrollMonth(e.target.value);
-                      if (selectedEmpId) handleSelectEmployeeForPayroll(selectedEmpId);
+                      if (selectedEmpId) handleSelectEmployeeForPayroll(selectedEmpId, e.target.value);
                     }}
                     className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:border-primary-500 focus:ring-2 focus:ring-primary-100 outline-none transition-all"
                   />
@@ -798,7 +810,7 @@ export const V1_Payslip: React.FC<V1PayslipProps> = ({
                   <thead>
                     <tr className="bg-slate-50 text-slate-400 text-[10px] font-bold uppercase tracking-wider border-b border-slate-100">
                       <th className="py-4 px-6">ID Slip</th>
-                      <th className="py-4 px-6">Karyawan</th>
+                      {activeRole !== 'employee' && <th className="py-4 px-6">Karyawan</th>}
                       <th className="py-4 px-6">Periode</th>
                       <th className="py-4 px-6">Gaji Bersih (Net)</th>
                       <th className="py-4 px-6">Status Pembayaran</th>
@@ -809,18 +821,48 @@ export const V1_Payslip: React.FC<V1PayslipProps> = ({
                     {filteredSlips.map((slip) => (
                       <tr key={slip.id} className="hover:bg-slate-50/50 transition-colors">
                         <td className="py-4 px-6 font-semibold text-slate-600">{slip.id}</td>
+                        {activeRole !== 'employee' && (
                         <td className="py-4 px-6">
                           <div className="font-bold text-slate-900">{slip.employeeName}</div>
                           <div className="text-xs text-slate-400 mt-0.5">{slip.employeeRole}</div>
                         </td>
+                        )}
                         <td className="py-4 px-6">
                           <span className="font-semibold text-slate-700">
                             {new Date(slip.month + "-01").toLocaleDateString('id-ID', { month: 'long', year: 'numeric' })}
                           </span>
                         </td>
                         <td className="py-4 px-6 font-bold text-slate-900">{formatIDR(slip.netSalary)}</td>
-                        <td className="py-4 px-6">{getStatusBadge(slip.status)}</td>
+                        <td className="py-4 px-6 align-middle min-w-[290px]">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {getStatusBadge(slip.status)}
+                            <ReceiptBadge slip={slip} />
+                          </div>
+                          {(slip.paymentReference || slip.disputeNote || slip.resolutionNote) && (
+                            <dl className="mt-2 space-y-1 max-w-[220px] text-[11px] leading-snug text-slate-500">
+                              {slip.paymentReference && (
+                                <div className="flex gap-1.5">
+                                  <dt className="text-slate-400 shrink-0">Ref</dt>
+                                  <dd className="font-mono text-slate-600 break-all">{slip.paymentReference}</dd>
+                                </div>
+                              )}
+                              {slip.receiptStatus === 'Disputed' && slip.disputeNote && (
+                                <div className="flex gap-1.5">
+                                  <dt className="text-rose-400 shrink-0">Laporan</dt>
+                                  <dd className="text-rose-600 line-clamp-2" title={slip.disputeNote}>{slip.disputeNote}</dd>
+                                </div>
+                              )}
+                              {slip.resolutionNote && slip.receiptStatus !== 'Disputed' && (
+                                <div className="flex gap-1.5">
+                                  <dt className="text-slate-400 shrink-0">Tanggapan</dt>
+                                  <dd className="line-clamp-2" title={slip.resolutionNote}>{slip.resolutionNote}</dd>
+                                </div>
+                              )}
+                            </dl>
+                          )}
+                        </td>
                         <td className="py-4 px-6">
+                          <div className="flex flex-col items-center gap-2">
                           <div className="flex items-center justify-center gap-2">
                             <button
                               onClick={() => setViewingSlip(slip)}
@@ -834,7 +876,8 @@ export const V1_Payslip: React.FC<V1PayslipProps> = ({
                             >
                               <i className="fi fi-rr-download" /> PDF
                             </button>
-                            {activeRole === 'admin' && (
+                            {/* Only drafts can be deleted; the server refuses once a slip is approved. */}
+                            {canPrepare && (slip.status === 'Draft' || slip.status === 'Pending Approval') && (
                               <button
                                 onClick={() => {
                                   if (confirm('Apakah Anda yakin ingin menghapus slip gaji ini?')) {
@@ -847,6 +890,23 @@ export const V1_Payslip: React.FC<V1PayslipProps> = ({
                               >
                                 <i className="fi fi-rr-trash text-xs" />
                               </button>
+                            )}
+                          </div>
+                            {activeRole === 'employee' && slip.status === 'Paid' && slip.receiptStatus === 'Awaiting' && (
+                              <div className="flex items-center justify-center gap-2">
+                                <button
+                                  onClick={() => onConfirmReceipt(slip)}
+                                  className="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-all cursor-pointer whitespace-nowrap"
+                                >
+                                  Sudah Diterima
+                                </button>
+                                <button
+                                  onClick={() => setDialog({ kind: 'dispute', slip })}
+                                  className="px-3 py-1.5 text-xs font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-lg transition-all cursor-pointer whitespace-nowrap"
+                                >
+                                  Belum Diterima
+                                </button>
+                              </div>
                             )}
                           </div>
                         </td>
@@ -963,6 +1023,22 @@ export const V1_Payslip: React.FC<V1PayslipProps> = ({
                       className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-primary-500 focus:bg-white transition-all"
                     />
                   </div>
+                  {empModalMode === 'add' && userRole === 'admin' && (
+                    <div className="col-span-2">
+                      <label className="block text-xs font-medium text-slate-500 mb-1">
+                        Password Login Karyawan (opsional, min. 8 karakter)
+                      </label>
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        value={empLoginPassword}
+                        onChange={(e) => setEmpLoginPassword(e.target.value)}
+                        placeholder="Kosongkan bila login dibuat nanti"
+                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-primary-500 focus:bg-white transition-all"
+                      />
+                      <p className="text-[11px] text-slate-400 mt-1">Karyawan masuk memakai email di atas.</p>
+                    </div>
+                  )}
                   <div className="col-span-2">
                     <label className="block text-xs font-medium text-slate-500 mb-1">
                       Status PTKP (untuk hitung PPh 21)

@@ -32,6 +32,7 @@ const ATTENDANCE = [
 // Demo-only credentials — change immediately in any non-local environment.
 const ADMIN_PASSWORD = 'admin12345';
 const EMPLOYEE_PASSWORD = 'employee12345';
+const STAFF_PASSWORD = 'staff12345';
 
 async function seed() {
   await pool.query('INSERT INTO companies (id, name) VALUES ($1,$2) ON CONFLICT (id) DO NOTHING', [
@@ -82,9 +83,23 @@ async function seed() {
     [COMPANY_ID, employeeHash]
   );
 
+  const staffHash = await bcrypt.hash(STAFF_PASSWORD, 10);
+  for (const [id, email, name, role] of [
+    ['USR-FIN', 'finance@veloxpay.co.id', 'Rani Keuangan', 'finance'],
+    ['USR-APR', 'approver@veloxpay.co.id', 'Hadi Penyetuju', 'approver'],
+  ]) {
+    await pool.query(
+      `INSERT INTO users (id, company_id, email, password_hash, name, role, employee_id)
+       VALUES ($1, $2, $3, $4, $5, $6, NULL) ON CONFLICT (id) DO NOTHING`,
+      [id, COMPANY_ID, email, staffHash, name, role]
+    );
+  }
+
   console.log('Seed complete.');
   console.log('Admin login   -> dewi.lestari@veloxpay.co.id / ' + ADMIN_PASSWORD);
   console.log('Employee login -> ahmad.subarjo@veloxpay.co.id / ' + EMPLOYEE_PASSWORD);
+  console.log('Finance login  -> finance@veloxpay.co.id / ' + STAFF_PASSWORD);
+  console.log('Approver login -> approver@veloxpay.co.id / ' + STAFF_PASSWORD);
   await pool.end();
 }
 

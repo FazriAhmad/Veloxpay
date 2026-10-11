@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS users (
   email         TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   name          TEXT NOT NULL,
-  role          TEXT NOT NULL CHECK (role IN ('admin', 'employee')),
+  role          TEXT NOT NULL CHECK (role IN ('admin', 'finance', 'approver', 'employee')),
   employee_id   TEXT, -- set when role = 'employee', links to employees.id
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -132,5 +132,65 @@ CREATE RULE audit_logs_no_delete AS ON DELETE TO audit_logs DO INSTEAD NOTHING;
 CREATE INDEX IF NOT EXISTS idx_employees_company ON employees(company_id);
 CREATE INDEX IF NOT EXISTS idx_slips_company ON payroll_slips(company_id);
 CREATE INDEX IF NOT EXISTS idx_slips_employee ON payroll_slips(employee_id);
+
+-- One slip per employee per month, enforced by the database. The route used to
+-- check this with a SELECT before the INSERT, so two quick requests (a double click
+-- is enough) could both pass the check and both insert.
+CREATE UNIQUE INDEX IF NOT EXISTS payroll_slips_company_employee_month_key
+  ON payroll_slips (company_id, employee_id, month);
 CREATE INDEX IF NOT EXISTS idx_audit_company ON audit_logs(company_id);
 CREATE INDEX IF NOT EXISTS idx_notification_company ON notification_log(company_id);
+
+-- Maker-checker: 'finance' prepares slips, 'approver' approves/pays them. The CHECK above is
+-- only applied to new databases, so widen it on existing ones too.
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('admin', 'finance', 'approver', 'employee'));
+
+-- Who created the slip (users.id; NULL for slips made before this column existed).
+ALTER TABLE payroll_slips ADD COLUMN IF NOT EXISTS created_by TEXT;
+
+-- When on, the user who created a slip cannot approve it. Off by default so a company with a
+-- single admin can still run payroll.
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS require_separate_approver BOOLEAN NOT NULL DEFAULT false;
+
+-- An employee proposes their own attendance/overtime for a month; an admin or approver accepts it,
+-- and only then does it overwrite the attendance row that payroll reads.
+CREATE TABLE IF NOT EXISTS attendance_requests (
+  id              TEXT PRIMARY KEY,
+  company_id      TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  employee_id     TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  month           TEXT NOT NULL,
+  present         INT NOT NULL,
+  sick            INT NOT NULL,
+  leave           INT NOT NULL,
+  alpha           INT NOT NULL,
+  overtime_hours  NUMERIC NOT NULL,
+  note            TEXT,
+  status          TEXT NOT NULL DEFAULT 'Pending' CHECK (status IN ('Pending', 'Approved', 'Rejected')),
+  decided_by      TEXT,
+  decision_note   TEXT,
+  decided_at      TIMESTAMPTZ,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- One open request per employee and month; the database decides, not a prior SELECT.
+CREATE UNIQUE INDEX IF NOT EXISTS attendance_requests_one_pending
+  ON attendance_requests (employee_id, month) WHERE status = 'Pending';
+
+-- Receipt confirmation. "Paid" is the officer's claim that a transfer happened outside VeloxPay; the
+-- employee then confirms or disputes it. Kept apart from `status` so the approval flow is unchanged.
+ALTER TABLE payroll_slips ADD COLUMN IF NOT EXISTS payment_reference TEXT;
+ALTER TABLE payroll_slips ADD COLUMN IF NOT EXISTS receipt_status TEXT
+  CHECK (receipt_status IN ('Awaiting', 'Received', 'Disputed'));
+ALTER TABLE payroll_slips ADD COLUMN IF NOT EXISTS receipt_at TIMESTAMPTZ;
+ALTER TABLE payroll_slips ADD COLUMN IF NOT EXISTS dispute_note TEXT;
+ALTER TABLE payroll_slips ADD COLUMN IF NOT EXISTS resolution_note TEXT;
+UPDATE payroll_slips SET receipt_status = 'Awaiting' WHERE status = 'Paid' AND receipt_status IS NULL;
+
+-- Notifications now cover everything that needs somebody's action, not only the payslip email.
+-- recipient_employee_id is set only when the recipient is that employee, which is what lets an
+-- employee see their own rows and nobody else's.
+ALTER TABLE notification_log ADD COLUMN IF NOT EXISTS recipient_employee_id TEXT;
+ALTER TABLE notification_log ADD COLUMN IF NOT EXISTS kind TEXT;
+UPDATE notification_log n SET recipient_employee_id = s.employee_id
+  FROM payroll_slips s WHERE n.slip_id = s.id AND n.recipient_employee_id IS NULL;
+UPDATE notification_log SET kind = 'payslip_paid' WHERE kind IS NULL;

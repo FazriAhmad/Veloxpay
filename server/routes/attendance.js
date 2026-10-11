@@ -24,7 +24,7 @@ attendanceRouter.get('/', wrapAsync(async (req, res) => {
 }));
 
 // Upsert one employee's attendance for a given month.
-attendanceRouter.put('/:employeeId/:month', requireRole('admin'), wrapAsync(async (req, res) => {
+attendanceRouter.put('/:employeeId/:month', requireRole('admin', 'finance'), wrapAsync(async (req, res) => {
   const { present = 0, sick = 0, leave = 0, alpha = 0, overtimeHours = 0 } = req.body || {};
   const { employeeId, month } = req.params;
 

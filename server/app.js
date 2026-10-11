@@ -12,6 +12,8 @@ import { attendanceRouter } from './routes/attendance.js';
 import { slipsRouter } from './routes/slips.js';
 import { auditLogsRouter } from './routes/auditLogs.js';
 import { notificationsRouter } from './routes/notifications.js';
+import { attendanceRequestsRouter } from './routes/attendanceRequests.js';
+import { settingsRouter } from './routes/settings.js';
 
 // Exports the app without binding a port, so tests (see test/integration.test.js)
 // can drive it directly through supertest instead of needing a running server.
@@ -81,6 +83,8 @@ app.use('/attendance', attendanceRouter);
 app.use('/slips', slipsRouter);
 app.use('/audit-logs', auditLogsRouter);
 app.use('/notifications', notificationsRouter);
+app.use('/attendance-requests', attendanceRequestsRouter);
+app.use('/settings', settingsRouter);
 
 // Central error handler — keeps DB/validation errors from leaking stack traces to clients.
 app.use((err, _req, res, _next) => {

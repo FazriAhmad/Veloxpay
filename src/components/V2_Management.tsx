@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Employee, Attendance, PayrollSlip, SalaryComponent } from '../lib/mockData';
 import { CustomDropdown } from './CustomDropdown';
 import { DashboardOverview } from './DashboardOverview';
+import { AttendanceRequests } from './AttendanceRequests';
 
 interface V2ManagementProps {
   employees: Employee[];
@@ -10,7 +11,10 @@ interface V2ManagementProps {
   slips: PayrollSlip[];
   components: SalaryComponent[];
   activeRole: 'admin' | 'employee';
+  activeSubTab: 'dashboard' | 'components' | 'attendance' | 'approval' | 'reports' | 'requests';
+  userRole: 'admin' | 'finance' | 'approver' | 'employee';
   currentEmployeeId?: string;
+  onAttendanceChanged: () => void;
   onUpdateAttendance: (att: Attendance) => void;
   onAddComponent: (comp: Omit<SalaryComponent, 'id' | 'isEditable'>) => void;
   onUpdateComponent: (comp: SalaryComponent) => void;
@@ -25,6 +29,9 @@ export const V2_Management: React.FC<V2ManagementProps> = ({
   slips,
   components,
   activeRole,
+  activeSubTab,
+  userRole,
+  onAttendanceChanged,
   currentEmployeeId,
   onUpdateAttendance,
   onAddComponent,
@@ -33,7 +40,8 @@ export const V2_Management: React.FC<V2ManagementProps> = ({
   onUpdateSlipStatus,
   addToast,
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'dashboard' | 'components' | 'attendance' | 'approval' | 'reports'>('dashboard');
+  const canApprove = userRole === 'admin' || userRole === 'approver';
+  const canPrepare = userRole === 'admin' || userRole === 'finance';
 
   // Attendance Form State
   const [editingAttendanceId, setEditingAttendanceId] = useState<string | null>(null);
@@ -161,69 +169,7 @@ export const V2_Management: React.FC<V2ManagementProps> = ({
   return (
     <div className="space-y-6">
       {/* Tab Navigation */}
-      <div className="flex items-center justify-between border-b border-slate-200/60 pb-1.5 no-print">
-        <div className="flex gap-2 overflow-x-auto w-full sm:w-auto">
-          <button
-            onClick={() => setActiveSubTab('dashboard')}
-            className={`px-4 py-2 text-sm font-semibold border-b-2 whitespace-nowrap transition-all cursor-pointer ${
-              activeSubTab === 'dashboard'
-                ? 'border-primary-600 text-primary-600'
-                : 'border-transparent text-slate-500 hover:text-slate-900'
-            }`}
-          >
-            <i className="fi fi-rr-chart-pie-alt mr-2" /> Dashboard
-          </button>
-          
-          {activeRole === 'admin' && (
-            <>
-              <button
-                onClick={() => setActiveSubTab('components')}
-                className={`px-4 py-2 text-sm font-semibold border-b-2 whitespace-nowrap transition-all cursor-pointer ${
-                  activeSubTab === 'components'
-                    ? 'border-primary-600 text-primary-600'
-                    : 'border-transparent text-slate-500 hover:text-slate-900'
-                }`}
-              >
-                <i className="fi fi-rr-settings-sliders mr-2" /> Komponen Gaji
-              </button>
-              <button
-                onClick={() => setActiveSubTab('attendance')}
-                className={`px-4 py-2 text-sm font-semibold border-b-2 whitespace-nowrap transition-all cursor-pointer ${
-                  activeSubTab === 'attendance'
-                    ? 'border-primary-600 text-primary-600'
-                    : 'border-transparent text-slate-500 hover:text-slate-900'
-                }`}
-              >
-                <i className="fi fi-rr-calendar-clock mr-2" /> Absensi & Lembur
-              </button>
-              <button
-                onClick={() => setActiveSubTab('approval')}
-                className={`px-4 py-2 text-sm font-semibold border-b-2 whitespace-nowrap transition-all cursor-pointer ${
-                  activeSubTab === 'approval'
-                    ? 'border-primary-600 text-primary-600'
-                    : 'border-transparent text-slate-500 hover:text-slate-900'
-                }`}
-              >
-                <i className="fi fi-rr-badge-check mr-2" /> Persetujuan
-                {pendingSlips.length > 0 && (
-                  <span className="ml-1.5 px-1.5 py-0.5 text-[10px] font-bold text-white bg-rose-500 rounded-full">
-                    {pendingSlips.length}
-                  </span>
-                )}
-              </button>
-              <button
-                onClick={() => setActiveSubTab('reports')}
-                className={`px-4 py-2 text-sm font-semibold border-b-2 whitespace-nowrap transition-all cursor-pointer ${
-                  activeSubTab === 'reports'
-                    ? 'border-primary-600 text-primary-600'
-                    : 'border-transparent text-slate-500 hover:text-slate-900'
-                }`}
-              >
-                <i className="fi fi-rr-document-signed mr-2" /> Laporan
-              </button>
-            </>
-          )}
-        </div>
+      <div className="flex items-center justify-end no-print empty:hidden">
 
         {activeSubTab === 'components' && activeRole === 'admin' && (
           <button
@@ -343,8 +289,12 @@ export const V2_Management: React.FC<V2ManagementProps> = ({
           </motion.div>
         )}
 
+        {activeSubTab === 'requests' && activeRole === 'employee' && (
+          <AttendanceRequests mode="employee" addToast={addToast} />
+        )}
+
         {/* ATTENDANCE & OVERTIME SUBTAB */}
-        {activeSubTab === 'attendance' && activeRole === 'admin' && (
+        {activeSubTab === 'attendance' && canPrepare && (
           <motion.div
             key="attendance"
             initial={{ opacity: 0, y: 15 }}
@@ -559,10 +509,22 @@ export const V2_Management: React.FC<V2ManagementProps> = ({
                             </td>
                             <td className="py-4 px-6">
                               <div className="flex items-center justify-center gap-2">
+                                {!canApprove && canPrepare && slip.status === 'Draft' && (
+                                  <button
+                                    onClick={() => onUpdateSlipStatus(slip.id, 'Pending Approval')}
+                                    className="px-3 py-1.5 text-xs font-semibold text-white bg-primary-600 hover:bg-primary-700 rounded-lg transition-all flex items-center gap-1 cursor-pointer"
+                                  >
+                                    <i className="fi fi-rr-paper-plane" /> Ajukan
+                                  </button>
+                                )}
+                                {!canApprove && (slip.status === 'Pending Approval' || !canPrepare) && (
+                                  <span className="text-xs text-slate-400">Menunggu penyetuju</span>
+                                )}
+                                {canApprove && (
+                                  <>
                                 <button
                                   onClick={() => {
-                                    onUpdateSlipStatus(slip.id, 'Approved', 'Dewi Lestari');
-                                    addToast('Payroll Disetujui', `Slip gaji untuk ${slip.employeeName} disetujui untuk pembayaran.`, 'success');
+                                    onUpdateSlipStatus(slip.id, 'Approved');
                                   }}
                                   className="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-all flex items-center gap-1 cursor-pointer"
                                 >
@@ -579,6 +541,8 @@ export const V2_Management: React.FC<V2ManagementProps> = ({
                                 >
                                   <i className="fi fi-rr-cross" /> Tolak
                                 </button>
+                                  </>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -589,6 +553,8 @@ export const V2_Management: React.FC<V2ManagementProps> = ({
                 </div>
               )}
             </div>
+
+            <AttendanceRequests mode="staff" canDecide={canApprove} addToast={addToast} onDecided={onAttendanceChanged} />
 
             {/* Approved History */}
             <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">

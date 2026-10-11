@@ -13,10 +13,9 @@ notificationsRouter.get('/', wrapAsync(async (req, res) => {
   const scopedToSelf = req.auth.role === 'employee';
   const result = scopedToSelf
     ? await pool.query(
-        `SELECT n.* FROM notification_log n
-         LEFT JOIN payroll_slips s ON s.id = n.slip_id
-         WHERE n.company_id = $1 AND (s.employee_id = $2 OR n.slip_id IS NULL)
-         ORDER BY n.created_at DESC LIMIT 100`,
+        `SELECT * FROM notification_log
+         WHERE company_id = $1 AND recipient_employee_id = $2
+         ORDER BY created_at DESC LIMIT 100`,
         [req.auth.companyId, req.auth.employeeId]
       )
     : await pool.query(

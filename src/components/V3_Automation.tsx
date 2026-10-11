@@ -1,5 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { ReceiptBadge } from './ReceiptBadge';
+import { FormDialog } from './FormDialog';
+import { api } from '../lib/api';
 import { PayrollSlip, AuditLog, ScheduledConfig, NotificationLogEntry } from '../lib/mockData';
 
 interface V3AutomationProps {
@@ -8,11 +11,25 @@ interface V3AutomationProps {
   scheduledConfig: ScheduledConfig;
   notifications: NotificationLogEntry[];
   activeRole: 'admin' | 'employee';
+  activeSubTab: 'scheduler' | 'payment-status' | 'emails' | 'audit' | 'roles';
+  userRole: 'admin' | 'finance' | 'approver' | 'employee';
   onUpdateScheduledConfig: (config: ScheduledConfig) => void;
-  onDisbursePayroll: () => Promise<void>;
+  onDisbursePayroll: (references: Record<string, string>) => Promise<void>;
+  onResolveDispute: (slip: PayrollSlip, note: string, reference?: string) => Promise<void>;
   addToast: (title: string, message: string, type: 'success' | 'error' | 'info' | 'warning') => void;
   onViewSlipFromEmail: (slip: PayrollSlip) => void;
 }
+
+const KIND_LABEL: Record<string, string> = {
+  slip_needs_approval: 'Perlu disetujui',
+  slip_ready_to_pay: 'Siap dibayar',
+  slip_returned: 'Dikembalikan',
+  attendance_needs_approval: 'Perlu disetujui',
+  attendance_decided: 'Keputusan absensi',
+  dispute_opened: 'Perlu ditanggapi',
+  dispute_answered: 'Perlu konfirmasi',
+  payslip_paid: 'Slip gaji',
+};
 
 export const V3_Automation: React.FC<V3AutomationProps> = ({
   slips,
@@ -20,16 +37,30 @@ export const V3_Automation: React.FC<V3AutomationProps> = ({
   scheduledConfig,
   notifications,
   activeRole,
+  activeSubTab,
+  userRole,
   onUpdateScheduledConfig,
   onDisbursePayroll,
+  onResolveDispute,
   addToast,
   onViewSlipFromEmail,
 }) => {
-  // Every sub-tab except "emails" is admin-only, so employees start there rather than
-  // on a blank scheduler screen.
-  const [activeSubTab, setActiveSubTab] = useState<'scheduler' | 'payment-status' | 'emails' | 'audit' | 'roles'>(
-    activeRole === 'employee' ? 'emails' : 'scheduler'
-  );
+  // Transfer reference typed for each slip before it is marked Paid (slip id -> reference).
+  const [references, setReferences] = useState<Record<string, string>>({});
+  const [resolving, setResolving] = useState<PayrollSlip | null>(null);
+  const canApprove = userRole === 'admin' || userRole === 'approver';
+  const [requireSeparate, setRequireSeparate] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (userRole !== 'admin') return;
+    api.getSettings().then((s) => setRequireSeparate(s.requireSeparateApprover)).catch(() => {});
+  }, [userRole]);
+  const toggleSeparate = async (next: boolean) => {
+    try {
+      setRequireSeparate((await api.updateSettings(next)).requireSeparateApprover);
+    } catch (err) {
+      addToast('Gagal Menyimpan Pengaturan', err instanceof Error ? err.message : 'Terjadi kesalahan.', 'error');
+    }
+  };
 
   // Scheduler Form State
   const [schedDay, setSchedDay] = useState(scheduledConfig.dayOfMonth);
@@ -73,7 +104,8 @@ export const V3_Automation: React.FC<V3AutomationProps> = ({
 
     setDisbursing(true);
     try {
-      await onDisbursePayroll();
+      await onDisbursePayroll(references);
+      setReferences({});
       addToast('Status Diperbarui', `${approvedSlips.length} slip ditandai Sudah Dibayar. Notifikasi email diproses.`, 'success');
     } finally {
       setDisbursing(false);
@@ -120,74 +152,19 @@ export const V3_Automation: React.FC<V3AutomationProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Tab Navigation */}
-      <div className="flex items-center justify-between border-b border-slate-200/60 pb-1.5 no-print">
-        <div className="flex gap-2 overflow-x-auto w-full sm:w-auto">
-          {activeRole === 'admin' && (
-            <>
-              <button
-                onClick={() => setActiveSubTab('scheduler')}
-                className={`px-4 py-2 text-sm font-semibold border-b-2 whitespace-nowrap transition-all cursor-pointer ${
-                  activeSubTab === 'scheduler'
-                    ? 'border-primary-600 text-primary-600'
-                    : 'border-transparent text-slate-500 hover:text-slate-900'
-                }`}
-              >
-                <i className="fi fi-rr-calendar-clock mr-2" /> Penjadwalan
-              </button>
-              <button
-                onClick={() => setActiveSubTab('payment-status')}
-                className={`px-4 py-2 text-sm font-semibold border-b-2 whitespace-nowrap transition-all cursor-pointer ${
-                  activeSubTab === 'payment-status'
-                    ? 'border-primary-600 text-primary-600'
-                    : 'border-transparent text-slate-500 hover:text-slate-900'
-                }`}
-              >
-                <i className="fi fi-rr-credit-card mr-2" /> Status Pembayaran
-              </button>
-            </>
-          )}
-          <button
-            onClick={() => setActiveSubTab('emails')}
-            className={`px-4 py-2 text-sm font-semibold border-b-2 whitespace-nowrap transition-all cursor-pointer ${
-              activeSubTab === 'emails'
-                ? 'border-primary-600 text-primary-600'
-                : 'border-transparent text-slate-500 hover:text-slate-900'
-            }`}
-          >
-            <i className="fi fi-rr-envelope mr-2" /> Log Notifikasi Email
-            {notifications.filter(n => n.status === 'failed').length > 0 && (
-              <span className="ml-1.5 px-1.5 py-0.5 text-[10px] font-bold text-white bg-rose-600 rounded-full">
-                {notifications.filter(n => n.status === 'failed').length}
-              </span>
-            )}
-          </button>
-          {activeRole === 'admin' && (
-            <>
-              <button
-                onClick={() => setActiveSubTab('audit')}
-                className={`px-4 py-2 text-sm font-semibold border-b-2 whitespace-nowrap transition-all cursor-pointer ${
-                  activeSubTab === 'audit'
-                    ? 'border-primary-600 text-primary-600'
-                    : 'border-transparent text-slate-500 hover:text-slate-900'
-                }`}
-              >
-                <i className="fi fi-rr-shield-check mr-2" /> Log Audit
-              </button>
-              <button
-                onClick={() => setActiveSubTab('roles')}
-                className={`px-4 py-2 text-sm font-semibold border-b-2 whitespace-nowrap transition-all cursor-pointer ${
-                  activeSubTab === 'roles'
-                    ? 'border-primary-600 text-primary-600'
-                    : 'border-transparent text-slate-500 hover:text-slate-900'
-                }`}
-              >
-                <i className="fi fi-rr-key mr-2" /> Peran & Izin
-              </button>
-            </>
-          )}
-        </div>
-      </div>
+      {resolving && (
+        <FormDialog
+          title="Tanggapi laporan karyawan"
+          description={`${resolving.employeeName} melaporkan: "${resolving.disputeNote ?? ''}". Tulis apa yang sudah diperiksa atau dilakukan; karyawan akan diminta mengonfirmasi lagi.`}
+          fields={[
+            { name: 'note', label: 'Tanggapan', type: 'textarea', required: true, maxLength: 500, placeholder: 'Mis. Sudah dicek ke bank, transfer ulang hari ini' },
+            { name: 'reference', label: 'Nomor referensi transfer baru', maxLength: 100, hint: 'Isi bila ada transfer ulang; kosongkan bila tidak berubah.' },
+          ]}
+          submitLabel="Kirim Tanggapan"
+          onSubmit={(v) => onResolveDispute(resolving, v.note, v.reference || undefined)}
+          onClose={() => setResolving(null)}
+        />
+      )}
 
       {/* SUBTAB CONTENT — no AnimatePresence mode="wait": under React 19 StrictMode
           it can leave the exiting sub-tab mounted forever (see App.tsx for the same fix). */}
@@ -349,7 +326,8 @@ export const V3_Automation: React.FC<V3AutomationProps> = ({
 
               <button
                 onClick={triggerMarkAsPaid}
-                disabled={disbursing || slips.filter(s => s.status === 'Approved').length === 0}
+                disabled={!canApprove || disbursing || slips.filter(s => s.status === 'Approved').length === 0}
+                title={canApprove ? undefined : 'Hanya penyetuju atau admin yang dapat menandai dibayar'}
                 className="w-full sm:w-auto px-6 py-3 text-sm font-semibold text-white bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 disabled:opacity-50 rounded-xl shadow-lg shadow-emerald-500/15 transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
                 {disbursing ? (
@@ -376,17 +354,19 @@ export const V3_Automation: React.FC<V3AutomationProps> = ({
                       <th className="py-4 px-6">Gaji Bersih</th>
                       <th className="py-4 px-6">Status Pembayaran</th>
                       <th className="py-4 px-6">Tanggal Ditandai Dibayar</th>
+                      <th className="py-4 px-6">No. Referensi Transfer</th>
+                      <th className="py-4 px-6">Konfirmasi Karyawan</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-sm text-slate-600">
-                    {slips.filter(s => s.month === '2026-09').length === 0 ? (
+                    {slips.filter(s => s.status === 'Approved' || s.status === 'Paid').length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="p-12 text-center text-slate-400 text-xs italic">
-                          Tidak ada slip gaji diterbitkan untuk September 2026. Buat slip terlebih dahulu di tab V1.
+                        <td colSpan={8} className="p-12 text-center text-slate-400 text-xs italic">
+                          Belum ada slip yang disetujui. Setujui slip terlebih dahulu di Persetujuan.
                         </td>
                       </tr>
                     ) : (
-                      slips.filter(s => s.month === '2026-09').map((slip) => (
+                      slips.filter(s => s.status === 'Approved' || s.status === 'Paid').map((slip) => (
                         <tr key={slip.id} className="hover:bg-slate-50/20">
                           <td className="py-4 px-6 font-semibold">{slip.id}</td>
                           <td className="py-4 px-6">
@@ -418,6 +398,41 @@ export const V3_Automation: React.FC<V3AutomationProps> = ({
                               <span className="text-slate-400 italic">Belum ditandai</span>
                             )}
                           </td>
+                          <td className="py-4 px-6 text-xs">
+                            {slip.status === 'Approved' ? (
+                              <input
+                                type="text"
+                                maxLength={100}
+                                disabled={!canApprove}
+                                aria-label={`Nomor referensi ${slip.id}`}
+                                placeholder="opsional"
+                                value={references[slip.id] ?? ''}
+                                onChange={(e) => setReferences({ ...references, [slip.id]: e.target.value })}
+                                className="w-36 px-2 py-1.5 border border-slate-200 rounded-lg text-xs"
+                              />
+                            ) : (
+                              <span className="font-mono text-slate-700">{slip.paymentReference ?? '-'}</span>
+                            )}
+                          </td>
+                          <td className="py-4 px-6 text-xs space-y-1">
+                            <ReceiptBadge slip={slip} />
+                            {slip.receiptStatus === 'Disputed' && (
+                              <>
+                                <div className="text-rose-500">"{slip.disputeNote}"</div>
+                                {canApprove && (
+                                  <button
+                                    onClick={() => setResolving(slip)}
+                                    className="px-2.5 py-1 text-[11px] font-semibold text-white bg-primary-600 hover:bg-primary-700 rounded-lg cursor-pointer"
+                                  >
+                                    Tanggapi
+                                  </button>
+                                )}
+                              </>
+                            )}
+                            {slip.receiptStatus === 'Awaiting' && slip.resolutionNote && (
+                              <div className="text-slate-400">Tanggapan: {slip.resolutionNote}</div>
+                            )}
+                          </td>
                         </tr>
                       ))
                     )}
@@ -447,7 +462,7 @@ export const V3_Automation: React.FC<V3AutomationProps> = ({
 
               {notifications.length === 0 ? (
                 <div className="p-8 text-center text-slate-400 text-xs italic">
-                  Belum ada notifikasi. Notifikasi terkirim saat slip ditandai Sudah Dibayar.
+                  Belum ada notifikasi. Notifikasi muncul saat ada yang perlu disetujui, dibayar, atau dikonfirmasi.
                 </div>
               ) : (
                 notifications.map((notif) => (
@@ -466,6 +481,9 @@ export const V3_Automation: React.FC<V3AutomationProps> = ({
                           {new Date(notif.sentAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
                         </span>
                       </div>
+                      {notif.kind && KIND_LABEL[notif.kind] && (
+                        <span className="inline-block mt-1 px-1.5 py-0.5 text-[9px] font-bold text-primary-700 bg-primary-50 rounded">{KIND_LABEL[notif.kind]}</span>
+                      )}
                       <h4 className="text-xs mt-1 truncate text-slate-800 font-semibold">{notif.subject}</h4>
                       <p className="text-[10px] text-slate-400 truncate mt-0.5">{notifStatusMeta[notif.status].label} — {notif.detail}</p>
                     </div>
@@ -653,6 +671,24 @@ export const V3_Automation: React.FC<V3AutomationProps> = ({
                 </tbody>
               </table>
             </div>
+
+            {requireSeparate !== null && (
+              <label className="flex items-start gap-3 p-4 rounded-2xl border border-slate-100 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={requireSeparate}
+                  onChange={(e) => toggleSeparate(e.target.checked)}
+                />
+                <span>
+                  <strong className="text-slate-900">Pembuat slip tidak boleh menyetujui slipnya sendiri</strong>
+                  <span className="block text-xs text-slate-500 mt-1">
+                    Slip dibuat oleh Keuangan dan disetujui oleh Penyetuju. Bila dimatikan, satu orang bisa membuat sekaligus
+                    menyetujui slip; jangan matikan jika perusahaan Anda punya lebih dari satu orang yang berwenang.
+                  </span>
+                </span>
+              </label>
+            )}
 
             <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 text-xs text-slate-500 leading-relaxed">
               <strong>Catatan Hak Akses:</strong> Matriks di atas untuk dokumentasi tampilan saja. Pembatasan sesungguhnya ditegakkan oleh server pada setiap permintaan API berdasarkan role di token login Anda — bukan oleh menu yang ditampilkan di sini.

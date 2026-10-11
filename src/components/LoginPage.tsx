@@ -6,28 +6,39 @@ interface LoginPageProps {
   onBack: () => void;
 }
 
+// Local demo logins created by `npm run seed`. Never seed these into a real environment.
+const DEMO_ACCOUNTS = [
+  { role: 'Admin', email: 'dewi.lestari@veloxpay.co.id', password: 'admin12345' },
+  { role: 'Keuangan', email: 'finance@veloxpay.co.id', password: 'staff12345' },
+  { role: 'Penyetuju', email: 'approver@veloxpay.co.id', password: 'staff12345' },
+  { role: 'Karyawan', email: 'ahmad.subarjo@veloxpay.co.id', password: 'employee12345' },
+];
+
 export const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onBack }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email.trim() || !password) {
-      setError('Email dan password wajib diisi.');
-      return;
-    }
-
+  const signIn = async (mail: string, pass: string) => {
     setError('');
     setIsSubmitting(true);
     try {
-      await onLogin(email.trim(), password);
+      await onLogin(mail, pass);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Gagal masuk. Coba lagi.');
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.trim() || !password) {
+      setError('Email dan password wajib diisi.');
+      return;
+    }
+    signIn(email.trim(), password);
   };
 
   return (
@@ -120,15 +131,19 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onBack }) => {
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-3">
               Akun demo
             </span>
-            <div className="space-y-1.5 text-xs text-slate-500">
-              <div className="flex justify-between gap-4">
-                <span>Admin</span>
-                <span className="font-mono text-slate-700">dewi.lestari@veloxpay.co.id / admin12345</span>
-              </div>
-              <div className="flex justify-between gap-4">
-                <span>Karyawan</span>
-                <span className="font-mono text-slate-700">ahmad.subarjo@veloxpay.co.id / employee12345</span>
-              </div>
+            <div className="grid grid-cols-2 gap-2">
+              {DEMO_ACCOUNTS.map((acc) => (
+                <button
+                  key={acc.role}
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={() => signIn(acc.email, acc.password)}
+                  className="px-3 py-2.5 text-left rounded-xl border border-slate-200 hover:border-primary-500 hover:bg-primary-50/40 disabled:opacity-60 transition-all cursor-pointer"
+                >
+                  <span className="block text-xs font-bold text-slate-800">{acc.role}</span>
+                  <span className="block text-[10px] text-slate-400 truncate">{acc.email}</span>
+                </button>
+              ))}
             </div>
           </div>
         </div>
